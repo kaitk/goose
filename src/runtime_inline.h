@@ -71,6 +71,26 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
 #pragma fp_contract(off)
 #endif
 
+/* What the program's pointers to scalars point at (CodeGen::PT). Values are
+   packed (goose_spec.md C.2), so those pointers may be misaligned, which
+   x86 and arm64 load and store through at full speed. Elsewhere the C
+   compiler is told: 32-bit ARM, for one, faults on a misaligned ldrd, strd
+   or vldr, which a plain int64_t or double access may compile to. */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__TINYC__) && \
+    !defined(__x86_64__) && !defined(__i386__) && !defined(__aarch64__)
+#define GS_UNALIGNED __attribute__((aligned(1)))
+#else
+#define GS_UNALIGNED
+#endif
+typedef int16_t gs_ua_i16 GS_UNALIGNED;
+typedef int32_t gs_ua_i32 GS_UNALIGNED;
+typedef int64_t gs_ua_i64 GS_UNALIGNED;
+typedef uint16_t gs_ua_u16 GS_UNALIGNED;
+typedef uint32_t gs_ua_u32 GS_UNALIGNED;
+typedef uint64_t gs_ua_u64 GS_UNALIGNED;
+typedef float gs_ua_f32 GS_UNALIGNED;
+typedef double gs_ua_f64 GS_UNALIGNED;
+
 #ifndef GS_NEED_THREADS
 #define GS_NEED_THREADS 0
 #endif
@@ -182,7 +202,8 @@ enum {
     GS_E_TAG,          /* corrupt ADT tag (debug builds only) */
     GS_E_ENDIAN,       /* serialization on a big-endian host */
     GS_E_SLICELEN,     /* slice pool length negative or beyond any data stack */
-    GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
+)GSRT"
+R"GSRT(    GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
     GS_E_POPN,         /* pop_n of a negative count or more than the length */
 };
@@ -198,8 +219,7 @@ GS_API GS_NORETURN void gs_idxfail(int64_t i, int64_t n, const char *file, int l
 GS_API GS_NORETURN void gs_divfail(const char *file, int line);
 GS_API GS_NORETURN void gs_divovf(const char *file, int line);
 /* The debug build's failing overflow and `as` checks. */
-)GSRT"
-R"GSRT(GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char *type,
+GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char *type,
                                const char *file, int line);
 GS_API GS_NORETURN void gs_ovf_neg(int64_t a, const char *type, const char *file, int line);
 GS_API GS_NORETURN void gs_asfail_i(const char *why, int64_t v, const char *type,
@@ -334,7 +354,8 @@ static inline int gs_simd_level(void) {
      : GS_KSZ(n, 5, 7) ? (void)(GS_AT(uint32_t, d, 0) = 0, GS_AT(uint32_t, d, (n) - 4) = 0) \
      : GS_KSZ(n, 9, 16) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
      : GS_KSZ(n, 17, 32) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, 8) = 0, \
-                                  GS_AT(uint64_t, d, (n) - 16) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
+)GSRT"
+R"GSRT(                                  GS_AT(uint64_t, d, (n) - 16) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
      : (void)memset((d), 0, (n)))
 #else
 #define GS_MEMCPY(d, s, n) memcpy((d), (s), (n))
@@ -358,8 +379,7 @@ static uint64_t gs_bytemask(int64_t k) {
 
 /* memcpy, memmove and memcmp for a slice's elements. An empty slice's data
    pointer is NULL where the slice was zero-filled (default<T>(), a default
-)GSRT"
-R"GSRT(   element), and C leaves all three undefined on a null pointer even for
+   element), and C leaves all three undefined on a null pointer even for
    zero bytes. A copy of up to 16 bytes loads both overlapping halves before
    it stores them, and one of up to 256 bytes moves 16 at a time, the last 16
    overlapping, where the library's memcpy would take a call and a dispatch
@@ -505,7 +525,8 @@ GS_DIVOPS_S(i32, int32_t, INT32_MIN, INT32_MAX)
 #if GS_DEBUG
 
 /* Signed narrow types (8/16/32 bits): 64-bit signed math covers every
-   intermediate result. */
+)GSRT"
+R"GSRT(   intermediate result. */
 #define GS_INTOPS_S(SFX, T, MIN, MAX, BITS) \
 static T gs_add_##SFX(T a, T b, const char *file, int line) { \
     int64_t r = (int64_t)a + (int64_t)b; \
@@ -526,8 +547,7 @@ static T gs_neg_##SFX(T a, const char *file, int line) { \
 static T gs_shl_##SFX(T a, int64_t n) { \
     return (T)((uint64_t)a << (n & (BITS - 1))); } \
 static T gs_shr_##SFX(T a, int64_t n) { \
-)GSRT"
-R"GSRT(    return (T)((int64_t)a >> (n & (BITS - 1))); }
+    return (T)((int64_t)a >> (n & (BITS - 1))); }
 
 /* Unsigned types wrap modulo 2^width by definition (§6.2) in every build:
    plain C unsigned arithmetic, truncated back to the width. */
@@ -683,7 +703,8 @@ static uint64_t gs_divu_gen(uint64_t d, uint8_t *more) {
     uint64_t rem, m;
     if (d == 0) { *more = GS_DIVU_NONE; return 0; }
     while (!(d >> k)) k--;
-    if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
+)GSRT"
+R"GSRT(    if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
     /* floor(2^(64+k) / d), which fits since d > 2^k; then the smallest
        power that works, or the 65-bit form one past it. */
     m = gs_div128_u64((uint64_t)1 << k, d, &rem);
@@ -716,8 +737,7 @@ static uint64_t gs_divu_q(uint64_t x, uint64_t magic, uint8_t more) {
 #endif
 }
 
-)GSRT"
-R"GSRT(/* The same for a dividend and divisor that fit in 32 bits, with a 32-bit
+/* The same for a dividend and divisor that fit in 32 bits, with a 32-bit
    magic: x / d is the high half of a 32x32 product, which a C compiler
    vectorizes where it keeps the 64x64 one scalar, and which needs no
    128-bit arithmetic, so only a zero divisor gets GS_DIVU_NONE. */
@@ -876,7 +896,8 @@ typedef struct gs_qstate *gs_queue;
 GS_API void gs_qinit(gs_queue *q);
 GS_API void gs_qput(gs_queue *q, const void *data, int64_t size);
 GS_API gs_qnode *gs_qget(gs_queue *q);
-GS_API gs_qnode *gs_qpoll(gs_queue *q);
+)GSRT"
+R"GSRT(GS_API gs_qnode *gs_qpoll(gs_queue *q);
 
 #ifndef GS_RUNTIME_OBJECT
 
@@ -900,8 +921,7 @@ static void gs_stack_init(gs_stack *s) {
 }
 
 /* The calling thread program's block of n stacks, each with its region:
-)GSRT"
-R"GSRT(   main's from gs_rt_init, a worker's from its entry thunk. */
+   main's from gs_rt_init, a worker's from its entry thunk. */
 static void gs_stack_block(int64_t n) {
     gs_stks = (gs_stack *)calloc((size_t)(n > 0 ? n : 1), sizeof(gs_stack));
     if (!gs_stks) gs_panic("out of memory allocating stack block");
@@ -1080,7 +1100,8 @@ static int64_t gs_zig_check(const uint8_t *p, const uint8_t *end, int64_t *out) 
    bitmap is one data stack's worth of scratch, so the largest image that can
    be verified is eight times a stack's reservation; from_bytes rejects a
    larger one rather than growing into the guard region. */
-#define GS_BM_SET(bm, i) ((bm)[(uint64_t)(i) >> 3] |= (uint8_t)(1u << ((i) & 7)))
+)GSRT"
+R"GSRT(#define GS_BM_SET(bm, i) ((bm)[(uint64_t)(i) >> 3] |= (uint8_t)(1u << ((i) & 7)))
 #define GS_BM_GET(bm, i) (((bm)[(uint64_t)(i) >> 3] >> ((i) & 7)) & 1)
 #define GS_BM_MAX ((int64_t)(GS_STACK_RESERVE))
 
@@ -1101,8 +1122,7 @@ static int gs_is_le(void) {
 #define GS_FMT_MAX 32
 
 GS_API int64_t gs_fmt_i64(uint8_t *dst, int64_t v);
-)GSRT"
-R"GSRT(GS_API int64_t gs_fmt_u64(uint8_t *dst, uint64_t v);
+GS_API int64_t gs_fmt_u64(uint8_t *dst, uint64_t v);
 GS_API int64_t gs_fmt_f64(uint8_t *dst, double v);
 GS_API int64_t gs_fmt_f32(uint8_t *dst, float v);
 GS_API int64_t gs_fmt_bool(uint8_t *dst, int64_t v);

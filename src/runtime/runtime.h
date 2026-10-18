@@ -59,6 +59,26 @@
 #pragma fp_contract(off)
 #endif
 
+/* What the program's pointers to scalars point at (CodeGen::PT). Values are
+   packed (goose_spec.md C.2), so those pointers may be misaligned, which
+   x86 and arm64 load and store through at full speed. Elsewhere the C
+   compiler is told: 32-bit ARM, for one, faults on a misaligned ldrd, strd
+   or vldr, which a plain int64_t or double access may compile to. */
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__TINYC__) && \
+    !defined(__x86_64__) && !defined(__i386__) && !defined(__aarch64__)
+#define GS_UNALIGNED __attribute__((aligned(1)))
+#else
+#define GS_UNALIGNED
+#endif
+typedef int16_t gs_ua_i16 GS_UNALIGNED;
+typedef int32_t gs_ua_i32 GS_UNALIGNED;
+typedef int64_t gs_ua_i64 GS_UNALIGNED;
+typedef uint16_t gs_ua_u16 GS_UNALIGNED;
+typedef uint32_t gs_ua_u32 GS_UNALIGNED;
+typedef uint64_t gs_ua_u64 GS_UNALIGNED;
+typedef float gs_ua_f32 GS_UNALIGNED;
+typedef double gs_ua_f64 GS_UNALIGNED;
+
 #ifndef GS_NEED_THREADS
 #define GS_NEED_THREADS 0
 #endif

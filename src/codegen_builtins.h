@@ -198,7 +198,7 @@ inline vector<string> CodeGen::EmitBuiltin(Call *c, Dst d0) {
                     image = cat(image, " + ", pre);
                     n = cat("(", nn, "->size - 8 - ", pre, ")");
                 }
-                L(cnt, " = *(int64_t *)(", nn, " + 1);");
+                L(cnt, " = *(gs_ua_i64 *)(", nn, " + 1);");
                 L("GS_MEMCPY(", Top(stk), ", ", image, ", (size_t)", n, ");");
                 Bump(stk, n);
                 L("free(", nn, ");");
@@ -290,7 +290,7 @@ inline vector<string> CodeGen::EmitBuiltin(Call *c, Dst d0) {
             if (elem->kind == TY_REF && elem->ref->lenstorage >= 0)
                 return { LoadLoc(BytesLoc(at, elem, lv), c->rettypes[0], ln) };
             auto tv = T();
-            FixedLocal(elem, tv, cat("*(", CT(elem), " *)", at));
+            FixedLocal(elem, tv, cat("*(", PT(elem), " *)", at));
             return { tv };
         }
         case B_POP_N: {
@@ -378,9 +378,9 @@ inline vector<string> CodeGen::EmitBuiltin(Call *c, Dst d0) {
                         }
                     } else if (ak == A_LIMITED) {
                         if (v.typedelems) L(v.elems, "[", iv, "] = ", fv, ";");
-                        else L("*(", CT(elem), " *)(", ElemAddr(v, iv), ") = ", fv, ";");
+                        else L("*(", PT(elem), " *)(", ElemAddr(v, iv), ") = ", fv, ";");
                     } else {
-                        L("*(", CT(elem), " *)", cur, " = ", fv, ";");
+                        L("*(", PT(elem), " *)", cur, " = ", fv, ";");
                         L(cur, " += ", esz, ";");
                     }
                     ind--;
@@ -421,7 +421,7 @@ inline vector<string> CodeGen::EmitBuiltin(Call *c, Dst d0) {
             auto x = GenPure(an[1]);
             auto i = T();
             L("int64_t ", i, " = GS_IDX(", x, ", ", lv.lenlv, ", ", LocArgs(ln), ");");
-            L("*(int64_t *)", Top(lv.flstk), " = ", i, ";");
+            L("*(gs_ua_i64 *)", Top(lv.flstk), " = ", i, ";");
             L(TopW(lv.flstk), " += 8;");
             L(lv.fl, ".len++;");
             return {};
@@ -551,7 +551,7 @@ inline vector<string> CodeGen::EmitPush(vector<Node *> &an, Line ln) {
         L("int64_t ", nl, " = ", v.len, ";");
         L("if (", nl, " >= ", LimitedCap(lv), ") gs_abort(GS_E_CAPACITY, ", LocArgs(ln), ");");
         auto e = T();
-        L(CT(elem), " *", e, " = (", CT(elem), " *)(", ElemAddr(v, nl), ");");
+        L(PT(elem), " *", e, " = (", PT(elem), " *)(", ElemAddr(v, nl), ");");
         if (relref) {
             // A relative-reference element stores the offset from its
             // own slot, not the pointer (§3.9).
@@ -570,7 +570,7 @@ inline vector<string> CodeGen::EmitPush(vector<Node *> &an, Line ln) {
         if (IsBytesT(elem)) {
             L("uint8_t *", e, " = ", Top(lv.stk), ";");
         } else {
-            L(CT(elem), " *", e, " = (", CT(elem), " *)", Top(lv.stk), ";");
+            L(PT(elem), " *", e, " = (", PT(elem), " *)", Top(lv.stk), ";");
         }
         if (relref) EmitRelStore(lv.stk, elem, ev, ln, RelValue(an[1]));
         else if (inplace) GenConstruct(an[1], lv.stk, elem);
@@ -617,7 +617,7 @@ inline void CodeGen::EmitAppend(vector<Node *> &an, Line ln) {
         auto base = T(), nn = T(), bytes = T();
         L("uint8_t *", base, " = ", Top(lv.stk), ";");
         GenAny(src, Dst { DK_STACK, lv.stk, st });
-        L("int64_t ", nn, " = *(uint32_t *)(", base, " + 4);");
+        L("int64_t ", nn, " = *(gs_ua_u32 *)(", base, " + 4);");
         L("int64_t ", bytes, " = ", nn, " * ", FixedSize(elem), ";");
         L("memmove(", base, ", ", base, " + 8, (size_t)", bytes, ");");
         L(TopW(lv.stk), " = ", base, " + ", bytes, ";");
@@ -702,7 +702,7 @@ inline vector<string> CodeGen::EmitAlloc(Call *c, vector<Node *> &an) {
     ind++;
     L(lv.fl, ".len--;");
     L(TopW(lv.flstk), " -= 8;");
-    L(iv, " = *(int64_t *)", Top(lv.flstk), ";");
+    L(iv, " = *(gs_ua_i64 *)", Top(lv.flstk), ";");
     ind--;
     L("} else {");
     ind++;
@@ -710,7 +710,7 @@ inline vector<string> CodeGen::EmitAlloc(Call *c, vector<Node *> &an) {
     ind--;
     L("}");
     auto e = T();
-    L(CT(elem), " *", e, " = (", CT(elem), " *)(", ElemAddr(v, iv), ");");
+    L(PT(elem), " *", e, " = (", PT(elem), " *)(", ElemAddr(v, iv), ");");
     if (atslot) FixedLitAtLv(an[1], cat("(*", e, ")"), true);
     else StoreWhole(e, elem, ev);
     L("if (", iv, " == ", lv.lenlv, ") {");
@@ -806,7 +806,7 @@ inline vector<string> CodeGen::EmitSlicePool(Call *c, vector<Node *> &an, Line l
         L("}");
     }
     auto r = T();
-    L(CT(ast.SliceOf(elem, ln)), " ", r, " = { (", CT(elem), " *)(", ElemAddr(v, i), "), ", n,
+    L(CT(ast.SliceOf(elem, ln)), " ", r, " = { (", PT(elem), " *)(", ElemAddr(v, i), "), ", n,
       " };");
     return { r };
 }
@@ -866,7 +866,7 @@ inline void CodeGen::EmitDefaultElems(const ArrView &v, const string &first,
     L("for (int64_t ", k, " = 0; ", k, " < ", count, "; ", k, "++) {");
     ind++;
     auto e = T();
-    L(CT(v.elem), " *", e, " = (", CT(v.elem), " *)(", ElemAddr(v, cat("(", first, " + ", k, ")")),
+    L(PT(v.elem), " *", e, " = (", PT(v.elem), " *)(", ElemAddr(v, cat("(", first, " + ", k, ")")),
       ");");
     PushSc(SC_PLAIN);
     GenAny(init, Dst { DK_LVALUE, cat("(*", e, ")"), v.elem });
@@ -890,7 +890,7 @@ inline void CodeGen::EmitRzImage(Loc src, TypeExpr *t, const string &stk, Line l
         return;
     }
     auto cntp = T();
-    L("int64_t *", cntp, " = (int64_t *)", Top(stk), ";");
+    L("gs_ua_i64 *", cntp, " = (gs_ua_i64 *)", Top(stk), ";");
     auto lenv = T();
     L("int64_t ", lenv, ";");
     EmitValStore(stk, ast.inttypes[IS_I64], "0");
@@ -947,10 +947,10 @@ inline vector<string> CodeGen::EmitThreadSpawn(Call *c, vector<Node *> &an) {
         // Resizable values have an out-of-line header. Transfer a flat
         // image with its count, never a pointer into the spawning instance.
         auto szp = T();
-        L("int64_t *", szp, " = (int64_t *)", Top(stk), ";");
+        L("gs_ua_i64 *", szp, " = (gs_ua_i64 *)", Top(stk), ";");
         Bump(stk, "8");
         auto cntp = T();
-        L("int64_t *", cntp, " = (int64_t *)", Top(stk), ";");
+        L("gs_ua_i64 *", cntp, " = (gs_ua_i64 *)", Top(stk), ";");
         EmitValStore(stk, ast.inttypes[IS_I64], "0");
         if (IsFrameObj(pt)) {
             // Reserve the packed prefix, construct directly into the
@@ -969,7 +969,7 @@ inline vector<string> CodeGen::EmitThreadSpawn(Call *c, vector<Node *> &an) {
     }
     for (auto d : ThreadGlobals(sp)) {
         auto szp = T();
-        L("int64_t *", szp, " = (int64_t *)", Top(stk), ";");
+        L("gs_ua_i64 *", szp, " = (gs_ua_i64 *)", Top(stk), ";");
         Bump(stk, "8");
         auto lv = VarLoc(d);
         if (IsResz(d->type)) {
@@ -1031,13 +1031,13 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
             regions++;
             Append(b, "    gs_stack ", stk, "; gs_stack_init(&", stk, ");\n",
                    "    ", IsFrameObj(pt) ? CT(pt) : string("gs_rhdr"), " ", a, ";\n",
-                   "    {\n        int64_t sz = *(int64_t *)p; p += 8;\n");
+                   "    {\n        int64_t sz = *(gs_ua_i64 *)p; p += 8;\n");
             auto pre = IsFrameObj(pt) ? FoPrefixSize(pt) : string("0");
             auto hdr = IsFrameObj(pt) ? FoTailHdr(pt, a) : a;
             if (IsFrameObj(pt))
                 Append(b, "        GS_MEMCPY(&", a, ", p + 8, ", pre, ");\n");
             Append(b, "        ", hdr, ".base = ", stk, ".top;\n",
-                   "        ", hdr, ".len = *(int64_t *)p;\n",
+                   "        ", hdr, ".len = *(gs_ua_i64 *)p;\n",
                    "        GS_MEMCPY(", stk, ".top, p + 8 + ", pre,
                    ", (size_t)(sz - 8 - ", pre, "));\n",
                    "        ", stk, ".top += sz - 8 - ", pre, "; p += sz;\n    }\n");
@@ -1051,7 +1051,7 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
         } else if (IsLargeFixed(pt)) {
             // The spawn packet belongs exclusively to this worker, so its
             // fixed argument bytes are already the callee's private copy.
-            Append(b, "    ", CT(pt), " *a", i, " = (", CT(pt), " *)p; p += ",
+            Append(b, "    ", PT(pt), " *a", i, " = (", PT(pt), " *)p; p += ",
                    FixedSize(pt), ";\n");
             args.push_back(cat("a", i));
         } else if (!FixedSize(pt)) {
@@ -1060,7 +1060,7 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
             Append(b, "    ", CT(pt), " a", i, " = {0};\n");
             args.push_back(cat("a", i));
         } else {
-            Append(b, "    ", CT(pt), " a", i, " = *(", CT(pt), " *)p; p += ",
+            Append(b, "    ", CT(pt), " a", i, " = *(", PT(pt), " *)p; p += ",
                    FixedSize(pt), ";\n");
             PushArg(args, pt, IsPoolParam(sp, i), cat("a", i));
         }
@@ -1071,7 +1071,7 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
               "    if (!gs_gl) gs_panic(\"out of memory copying globals\");\n");
     for (auto d : ThreadGlobals(sp)) {
         auto gn = gnames[d];
-        Append(b, "    {\n        int64_t sz = *(int64_t *)p; p += 8; uint8_t *img = p; p += sz;\n");
+        Append(b, "    {\n        int64_t sz = *(gs_ua_i64 *)p; p += 8; uint8_t *img = p; p += sz;\n");
         if (IsResz(d->type)) {
             auto stk = gstks[d];
             regions++;
@@ -1081,7 +1081,7 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
                 auto pre = FoPrefixSize(d->type);
                 Append(b, "        GS_MEMCPY(&", gn, ", img + 8, ", pre, ");\n",
                        "        ", th, ".base = ", stk, "->top;\n",
-                       "        ", th, ".len = *(int64_t *)img;\n",
+                       "        ", th, ".len = *(gs_ua_i64 *)img;\n",
                        "        GS_MEMCPY(", stk, "->top, img + 8 + ", pre, ", (size_t)(sz - 8 - ",
                        pre, "));\n",
                        "        ", stk, "->top += sz - 8 - ", pre, ";\n");
@@ -1092,20 +1092,20 @@ inline void CodeGen::EmitThreadThunk(FnSpec *sp, int64_t stacks) {
                 auto esz = FixedSize(d->type->arr->sub);
                 auto flsz = FlEntrySize(d);
                 regions++;
-                Append(b, "        int64_t cnt = *(int64_t *)img, ebytes = cnt * ", esz, ";\n",
+                Append(b, "        int64_t cnt = *(gs_ua_i64 *)img, ebytes = cnt * ", esz, ";\n",
                        "        ", gn, ".base = ", stk, "->top;\n",
                        "        ", gn, ".len = cnt;\n",
                        "        GS_MEMCPY(", stk, "->top, img + 8, (size_t)ebytes);\n",
                        "        ", stk, "->top += ebytes;\n",
                        "        gs_stack_init(", p.second, ");\n",
                        "        ", p.first, ".base = ", p.second, "->top;\n",
-                       "        ", p.first, ".len = *(int64_t *)(img + 8 + ebytes);\n",
+                       "        ", p.first, ".len = *(gs_ua_i64 *)(img + 8 + ebytes);\n",
                        "        GS_MEMCPY(", p.second, "->top, img + 16 + ebytes, (size_t)(",
                        p.first, ".len * ", flsz, "));\n",
                        "        ", p.second, "->top += ", p.first, ".len * ", flsz, ";\n");
             } else {
                 Append(b, "        ", gn, ".base = ", stk, "->top;\n",
-                       "        ", gn, ".len = *(int64_t *)img;\n",
+                       "        ", gn, ".len = *(gs_ua_i64 *)img;\n",
                        "        GS_MEMCPY(", stk, "->top, img + 8, (size_t)(sz - 8));\n",
                        "        ", stk, "->top += sz - 8;\n");
             }
