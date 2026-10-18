@@ -3840,9 +3840,9 @@ Layout details needed for byte/C compatibility (`FixedSize`, `LayoutFields`,
   variants, otherwise two bytes. A standalone variant payload has no tag;
   a variant reference into an ADT addresses the payload after the tag.
 * `pad n` contributes exactly `n` bytes. In a fixed layout, bare `pad`
-  aligns the next real field to its scalar storage width (8 for plain
-  references and slices; 1 for composite fields). It adds nothing in a
-  variable layout or without a following field. There is no implicit
+  aligns the next real field to its scalar storage width (the pointer size
+  for plain references and slices; 1 for composite fields). It adds nothing
+  in a variable layout or without a following field. There is no implicit
   aggregate tail padding. A struct with no bytes of its own (no fields, and
   no `pad n`: `EmptyLayout`) occupies one, the `gs_empty` byte C gives it.
   A variant with none occupies none behind its ADT's tag and has no member

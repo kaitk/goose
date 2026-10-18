@@ -85,8 +85,16 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB, and
+   the defaults there leave room for a few dozen regions and the rest of the
+   program. */
 #ifndef GS_STACK_RESERVE
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
+#else
+#define GS_STACK_RESERVE_32 (64ull << 20)
+#define GS_STACK_RESERVE GS_STACK_RESERVE_32
+#endif
 #endif
 #ifndef GS_STACK_GAP
 #define GS_STACK_GAP (1ull << 20)   /* Unmapped tail so runaway growth aborts. */
@@ -97,7 +105,12 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
    worker's. Not enforced at reservation; what the platform refuses is
    retried smaller (gs_reserve_region). */
 #ifndef GS_STACK_BUDGET
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#else
+#define GS_STACK_BUDGET_32 (2048ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#endif
 #endif
 #ifndef GS_STACK_STATS
 #define GS_STACK_STATS 0    /* 1: each thread program reports its stack use as it ends. */
@@ -185,13 +198,13 @@ GS_API GS_NORETURN void gs_idxfail(int64_t i, int64_t n, const char *file, int l
 GS_API GS_NORETURN void gs_divfail(const char *file, int line);
 GS_API GS_NORETURN void gs_divovf(const char *file, int line);
 /* The debug build's failing overflow and `as` checks. */
-GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char *type,
+)GSRT"
+R"GSRT(GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char *type,
                                const char *file, int line);
 GS_API GS_NORETURN void gs_ovf_neg(int64_t a, const char *type, const char *file, int line);
 GS_API GS_NORETURN void gs_asfail_i(const char *why, int64_t v, const char *type,
                                     const char *file, int line);
-)GSRT"
-R"GSRT(GS_API GS_NORETURN void gs_asfail_u(const char *why, uint64_t v, const char *type,
+GS_API GS_NORETURN void gs_asfail_u(const char *why, uint64_t v, const char *type,
                                     const char *file, int line);
 /* f32: d is an f32's value, and takes that type's text form. */
 GS_API GS_NORETURN void gs_asfail_f(const char *why, double d, int f32, const char *type,
@@ -345,14 +358,14 @@ static uint64_t gs_bytemask(int64_t k) {
 
 /* memcpy, memmove and memcmp for a slice's elements. An empty slice's data
    pointer is NULL where the slice was zero-filled (default<T>(), a default
-   element), and C leaves all three undefined on a null pointer even for
+)GSRT"
+R"GSRT(   element), and C leaves all three undefined on a null pointer even for
    zero bytes. A copy of up to 16 bytes loads both overlapping halves before
    it stores them, and one of up to 256 bytes moves 16 at a time, the last 16
    overlapping, where the library's memcpy would take a call and a dispatch
    on the length; as the C library's memcpy, it takes runs that do not
    overlap. */
-)GSRT"
-R"GSRT(static void gs_memcpy(void *dst, const void *src, size_t n) {
+static void gs_memcpy(void *dst, const void *src, size_t n) {
     uint8_t *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
     if (n <= 16) {
@@ -513,15 +526,15 @@ static T gs_neg_##SFX(T a, const char *file, int line) { \
 static T gs_shl_##SFX(T a, int64_t n) { \
     return (T)((uint64_t)a << (n & (BITS - 1))); } \
 static T gs_shr_##SFX(T a, int64_t n) { \
-    return (T)((int64_t)a >> (n & (BITS - 1))); }
+)GSRT"
+R"GSRT(    return (T)((int64_t)a >> (n & (BITS - 1))); }
 
 /* Unsigned types wrap modulo 2^width by definition (§6.2) in every build:
    plain C unsigned arithmetic, truncated back to the width. */
 #define GS_INTOPS_U(SFX, T, MAX, BITS) \
 static T gs_add_##SFX(T a, T b) { return (T)(a + b); } \
 static T gs_sub_##SFX(T a, T b) { return (T)(a - b); } \
-)GSRT"
-R"GSRT(static T gs_mul_##SFX(T a, T b) { return (T)((uint64_t)a * (uint64_t)b); } \
+static T gs_mul_##SFX(T a, T b) { return (T)((uint64_t)a * (uint64_t)b); } \
 static T gs_shl_##SFX(T a, int64_t n) { \
     return (T)((uint64_t)a << (n & (BITS - 1))); } \
 static T gs_shr_##SFX(T a, int64_t n) { \
@@ -703,7 +716,8 @@ static uint64_t gs_divu_q(uint64_t x, uint64_t magic, uint8_t more) {
 #endif
 }
 
-/* The same for a dividend and divisor that fit in 32 bits, with a 32-bit
+)GSRT"
+R"GSRT(/* The same for a dividend and divisor that fit in 32 bits, with a 32-bit
    magic: x / d is the high half of a 32x32 product, which a C compiler
    vectorizes where it keeps the 64x64 one scalar, and which needs no
    128-bit arithmetic, so only a zero divisor gets GS_DIVU_NONE. */
@@ -711,8 +725,7 @@ static uint32_t gs_divu32_gen(uint32_t d, uint8_t *more) {
     int k = 31;
     uint64_t n;
     uint32_t m, rem;
-)GSRT"
-R"GSRT(    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
+    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
     while (!(d >> k)) k--;
     if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
     n = (uint64_t)1 << (32 + k);
@@ -887,7 +900,8 @@ static void gs_stack_init(gs_stack *s) {
 }
 
 /* The calling thread program's block of n stacks, each with its region:
-   main's from gs_rt_init, a worker's from its entry thunk. */
+)GSRT"
+R"GSRT(   main's from gs_rt_init, a worker's from its entry thunk. */
 static void gs_stack_block(int64_t n) {
     gs_stks = (gs_stack *)calloc((size_t)(n > 0 ? n : 1), sizeof(gs_stack));
     if (!gs_stks) gs_panic("out of memory allocating stack block");
@@ -896,8 +910,7 @@ static void gs_stack_block(int64_t n) {
 }
 
 /* The compiler passes the main program's stack count and the most regions
-)GSRT"
-R"GSRT(   it and any one worker hold: their stacks plus the dedicated ones of the
+   it and any one worker hold: their stacks plus the dedicated ones of the
    globals and of a worker's arguments. */
 static void gs_rt_init(int argc, char **argv, int64_t mainstacks, int64_t mainregions,
                        int64_t workerregions) {
@@ -1088,7 +1101,8 @@ static int gs_is_le(void) {
 #define GS_FMT_MAX 32
 
 GS_API int64_t gs_fmt_i64(uint8_t *dst, int64_t v);
-GS_API int64_t gs_fmt_u64(uint8_t *dst, uint64_t v);
+)GSRT"
+R"GSRT(GS_API int64_t gs_fmt_u64(uint8_t *dst, uint64_t v);
 GS_API int64_t gs_fmt_f64(uint8_t *dst, double v);
 GS_API int64_t gs_fmt_f32(uint8_t *dst, float v);
 GS_API int64_t gs_fmt_bool(uint8_t *dst, int64_t v);
@@ -1096,8 +1110,7 @@ GS_API int64_t gs_fmt_bool(uint8_t *dst, int64_t v);
 GS_API int64_t gs_fmt_quoted(uint8_t *dst, const uint8_t *s, int64_t n);
 
 /* print(...) (§3.7): each argument's text, then a newline. */
-)GSRT"
-R"GSRT(GS_API void gs_out_int(int64_t v);
+GS_API void gs_out_int(int64_t v);
 GS_API void gs_out_uint(uint64_t v);
 GS_API void gs_out_flt(double v);
 GS_API void gs_out_f32(float v);

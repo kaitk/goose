@@ -103,10 +103,9 @@ address: it holds a handle.
 * **Encoding.** A handle is one `u64`: the stack's id in the high bits and the
   offset in the low bits. Id 0 is a plain address, for static data, C memory
   and clang's shadow stack (where address-taken fixed locals live). Its base
-  table entry is 0. References stay 8 bytes, so every layout stays as on the
-  64-bit hosts the C backend targets (implementation §6.1). The base table
-  belongs to the thread program, like `gs_stks`, and also covers the globals'
-  dedicated stacks.
+  table entry is 0. References stay 8 bytes, so every layout stays as on a
+  64-bit host (implementation §6.1). The base table belongs to the thread
+  program, like `gs_stks`, and also covers the globals' dedicated stacks.
 * **Arithmetic is unchanged.** `base + i * size`, field offsets, the
   cursors that walk variable-size fields (`FieldPtr`), differences within a
   stack and a pool's range test all work on the integer. Only loads, stores

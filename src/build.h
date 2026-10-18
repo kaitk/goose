@@ -200,6 +200,38 @@ inline string RuntimeObject(const Builder &b) {
     return obj;
 }
 
+// The size of a pointer in the C the toolchain compiles, 8 or 4, by its
+// predefined macros: what a reference and a slice's data take in the
+// program's layouts (CodeGen::ptrsize). Asked once per toolchain and kept in
+// GOOSE_HOME/build/toolchain/<toolchain id>/. A compiler that names neither
+// gets 8, which the generated C checks.
+inline int64_t TargetPointerSize(const Toolchain &tc) {
+    auto dir = cat(GooseHome(), "/build/toolchain/", tc.id);
+    auto kept = cat(dir, "/pointer-size");
+    string text;
+    if (LoadFile(kept, text) && (text == "4" || text == "8")) return text[0] - '0';
+    std::error_code ec;
+    filesystem::create_directories(filesystem::path(dir), ec);
+    if (ec) throw CompileError { cat("cannot create ", dir, ": ", ec.message()) };
+    FileLock lock(cat(dir, "/probe.lock"), "waiting for another goose asking the C compiler");
+    if (LoadFile(kept, text) && (text == "4" || text == "8")) return text[0] - '0';
+    auto probe = cat(dir, "/pointer-size.c");
+    if (!WriteFileMakingDirs(probe, "#if defined(__SIZEOF_POINTER__)\n"
+                                    "gs_pointer_size __SIZEOF_POINTER__\n"
+                                    "#elif defined(_WIN64)\n"
+                                    "gs_pointer_size 8\n"
+                                    "#elif defined(_WIN32)\n"
+                                    "gs_pointer_size 4\n"
+                                    "#endif\n"))
+        throw CompileError { cat("cannot write ", probe) };
+    auto r = RunProcess(tc.style == "msvc" ? vector<string> { tc.cc, "/nologo", "/EP", probe }
+                                           : vector<string> { tc.cc, "-E", "-P", probe });
+    auto at = r.output.find("gs_pointer_size ");
+    int64_t size = r.started && !r.code && at != string::npos && r.output[at + 16] == '4' ? 4 : 8;
+    WriteFileMakingDirs(kept, cat(size));
+    return size;
+}
+
 // What `goose build` does once the compiler has written the program's C to
 // `cfile` in `builddir`: finds the runtime object for the toolchain `tc`,
 // which built the native parts whose response files are `nativersps`

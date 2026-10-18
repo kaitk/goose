@@ -201,7 +201,8 @@ exclude = ["tools", "third_party/demo"];
 ```
 
 Most values an `extern fn` passes have layouts C can declare for itself, a
-slice as `{ data, len }`, say (spec §7.10). A builder, `u8[>..]&`, is the
+slice as `{ data, len }` under `#pragma pack(push, 1)`, say (spec §7.10,
+C.2). A builder, `u8[>..]&`, is the
 exception: C appends to it through the runtime, which `goose.h` gives C
 compiled on its own. The compiler puts that header on the include path of
 every native part, the program's own included, CMake targets too, and

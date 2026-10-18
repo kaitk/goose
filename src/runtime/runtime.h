@@ -73,8 +73,16 @@
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB, and
+   the defaults there leave room for a few dozen regions and the rest of the
+   program. */
 #ifndef GS_STACK_RESERVE
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
+#else
+#define GS_STACK_RESERVE_32 (64ull << 20)
+#define GS_STACK_RESERVE GS_STACK_RESERVE_32
+#endif
 #endif
 #ifndef GS_STACK_GAP
 #define GS_STACK_GAP (1ull << 20)   /* Unmapped tail so runaway growth aborts. */
@@ -85,7 +93,12 @@
    worker's. Not enforced at reservation; what the platform refuses is
    retried smaller (gs_reserve_region). */
 #ifndef GS_STACK_BUDGET
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#else
+#define GS_STACK_BUDGET_32 (2048ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#endif
 #endif
 #ifndef GS_STACK_STATS
 #define GS_STACK_STATS 0    /* 1: each thread program reports its stack use as it ends. */
