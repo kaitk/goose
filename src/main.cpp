@@ -553,7 +553,7 @@ R"(  -D NAME[=VALUE]       Define a C macro in the generated program (or -DNAME)
   --update              Fetch packages at a tag or branch again (a commit is
                         never fetched again).
   --stack-reserve size  Address space reserved per data stack, with a K, M, G
-                        or T suffix (default 2G).
+                        or T suffix (default 2G, and 64M for 32-bit pointers).
   --stacks              Report the data stacks the program and each worker can
                         take, and the cap that puts on hardware_threads().
   --no-bce              Keep every bounds check.
@@ -691,6 +691,8 @@ Options:
   --header out.h        Also write a header for a C host, which supplies main
                         and starts the program through goose_init.
   --include header.h    Have the C include this header (may be repeated).
+  --pointer-size 4|8    Lay the program out for a C compiler with pointers of
+                        this size (default: this machine's).
   --jit                 Also run the program in this process.
   --emit-runtime out.c  Write the runtime's C.
   --<package>-link msvc|cc
@@ -775,15 +777,16 @@ bool ParseConfigValue(string s, uint64_t &out) {
 }
 
 // The data stack configuration the generated program compiles with, for
-// the --stacks report: the runtime's defaults (runtime.h), then the -D
-// given, --stack-reserve's among them. A -D the compiler cannot read keeps
-// the default in the report; the C compiler sees it either way.
-CodeGen::StackConfig StackConfigOf(const vector<string> &cdefines) {
+// the --stacks report: the runtime's defaults (runtime.h) for the pointer
+// size, then the -D given, --stack-reserve's among them. A -D the compiler
+// cannot read keeps the default in the report; the C compiler sees it either
+// way.
+CodeGen::StackConfig StackConfigOf(const vector<string> &cdefines, int64_t ptrsize) {
     string_view runtime;
     for (auto &rf : runtime_files)
         if (string_view(rf.name) == "runtime.h") runtime = rf.text;
-    auto value = [&](const char *name, uint64_t &out) {
-        auto key = cat("#define ", name, " ");
+    auto value = [&](const char *name, uint64_t &out, bool has32 = false) {
+        auto key = cat("#define ", name, ptrsize == 4 && has32 ? "_32 " : " ");
         if (auto at = runtime.find(key); at != string_view::npos) {
             auto line = runtime.substr(at + key.size());
             line = line.substr(0, line.find('\n'));
@@ -798,9 +801,9 @@ CodeGen::StackConfig StackConfigOf(const vector<string> &cdefines) {
     };
     CodeGen::StackConfig cfg { 0, 0, 0, 0 };
     uint64_t maxstacks = 0;
-    value("GS_STACK_RESERVE", cfg.reserve);
+    value("GS_STACK_RESERVE", cfg.reserve, true);
     value("GS_STACK_GAP", cfg.gap);
-    value("GS_STACK_BUDGET", cfg.budget);
+    value("GS_STACK_BUDGET", cfg.budget, true);
     value("GS_MAX_STACKS", maxstacks);
     cfg.maxstacks = (int64_t)maxstacks;
     return cfg;
@@ -853,6 +856,8 @@ int Main(int argc, char **argv) {
     auto forcejit = false, standalone = false;
     auto json = false, refresh = false, debug = false, verbose = false, dryrun = false;
     string ccrequest;
+    // --pointer-size; 0 until the compile settles it (pointersize below).
+    int64_t ptrsize = 0;
     // A build is for a deliverable: the inlining and the C compiler's
     // optimization both at their highest.
     auto optlevel = verb == "build" ? 2 : 1;
@@ -929,6 +934,14 @@ int Main(int argc, char **argv) {
         else if (arg == "--include" && i + 1 < argc) includenames.push_back(argv[++i]);
         else if (arg == "--stdlib" && i + 1 < argc) stdlibdir = argv[++i];
         else if (arg == "--cc" && i + 1 < argc) ccrequest = argv[++i];
+        else if (arg == "--pointer-size" && i + 1 < argc) {
+            string n = argv[++i];
+            if (n != "4" && n != "8") {
+                fprintf(stderr, "--pointer-size takes 4 or 8: %s\n", n.c_str());
+                return 1;
+            }
+            ptrsize = n[0] - '0';
+        }
         else if (arg == "--json") json = true;
         else if (arg == "--refresh") refresh = true;
         else if (arg == "--debug") {
@@ -1041,6 +1054,32 @@ int Main(int argc, char **argv) {
     // its packages, for the native parts the program needs (native.h).
     unique_ptr<Ast> astp;
     vector<int> nativepkgs;
+    // The C toolchain everything this command builds is built with, found
+    // when first needed: the native parts, the runtime object and the link
+    // have to agree on it.
+    Toolchain tc;
+    string tcwhy;
+    bool tclooked = false, havetc = false;
+    auto looktc = [&] {
+        if (!tclooked) havetc = FindToolchain(ccrequest, tc, tcwhy);
+        tclooked = true;
+        return havetc;
+    };
+    auto findtc = [&] {
+        if (!looktc()) fprintf(stderr, "%s\n", tcwhy.c_str());
+        return havetc;
+    };
+    // The pointer size the C is laid out for: --pointer-size, else a
+    // build's C compiler's, else this machine's. A build without a C
+    // compiler takes this machine's too, and says what is missing after
+    // the compile has reported the program's own errors.
+    auto pointersize = [&]() -> int64_t {
+        if (ptrsize) return ptrsize;
+        if (verb == "build" && looktc())
+            return TargetPointerSize(tc, buildopts.verbose || buildopts.dryrun ? msgs : nullptr,
+                                     buildopts.dryrun);
+        return (int64_t)sizeof(void *);
+    };
     auto compile = [&]() -> int {
         if (tokens) {
             DumpTokens(filename);
@@ -1139,8 +1178,10 @@ int Main(int argc, char **argv) {
         string_view runtime_ext_text;
         for (auto &rf : runtime_files)
             if (string_view(rf.name) == "runtime_ext.h") runtime_ext_text = rf.text;
-        auto stackcfg = StackConfigOf(cdefines);
-        CodeGen cg(ast, runtime_ext_text, includes, norfcheck, library, stackcfg.maxstacks);
+        ptrsize = pointersize();
+        auto stackcfg = StackConfigOf(cdefines, ptrsize);
+        CodeGen cg(ast, runtime_ext_text, includes, norfcheck, library, stackcfg.maxstacks,
+                   ptrsize);
         if (stacks) cg.StackReport(msgs, stackcfg);
         // The packages whose native parts the program needs, which a JIT
         // run takes functions from and a build links: its own, when it has
@@ -1201,18 +1242,6 @@ int Main(int argc, char **argv) {
             program = assemble(false);
         }
         return 0;
-    };
-    // The C toolchain everything this command builds is built with, found
-    // when first needed: the native parts, the runtime object and the link
-    // have to agree on it.
-    Toolchain tc;
-    string tcwhy;
-    bool tclooked = false, havetc = false;
-    auto findtc = [&] {
-        if (!tclooked) havetc = FindToolchain(ccrequest, tc, tcwhy);
-        tclooked = true;
-        if (!havetc) fprintf(stderr, "%s\n", tcwhy.c_str());
-        return havetc;
     };
     auto run = [&](const string &file) -> int {
         filename = file;

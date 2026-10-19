@@ -85,8 +85,16 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB and
+   a Windows one 2 GB, and the defaults there leave room for a few dozen
+   regions and the rest of the program. */
 #ifndef GS_STACK_RESERVE
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
+#else
+#define GS_STACK_RESERVE_32 (64ull << 20)
+#define GS_STACK_RESERVE GS_STACK_RESERVE_32
+#endif
 #endif
 #ifndef GS_STACK_GAP
 #define GS_STACK_GAP (1ull << 20)   /* Unmapped tail so runaway growth aborts. */
@@ -97,7 +105,15 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
    worker's. Not enforced at reservation; what the platform refuses is
    retried smaller (gs_reserve_region). */
 #ifndef GS_STACK_BUDGET
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#elif !defined(_WIN32)
+#define GS_STACK_BUDGET_32 (2048ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#else
+#define GS_STACK_BUDGET_32 (1024ull << 20)  /* What --stacks reports is the first. */
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#endif
 #endif
 #ifndef GS_STACK_STATS
 #define GS_STACK_STATS 0    /* 1: each thread program reports its stack use as it ends. */
@@ -107,6 +123,9 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
    guard region enforces it, so no growth path needs its own check. */
 #if GS_STACK_RESERVE > (1ull << 48)
 #error "GS_STACK_RESERVE exceeds the 2^48 limit (goose_spec.md 10.4)"
+#endif
+#if UINTPTR_MAX <= 0xFFFFFFFFu && GS_STACK_RESERVE + GS_STACK_GAP > (3ull << 30)
+#error "GS_STACK_RESERVE and GS_STACK_GAP exceed a 32-bit address space"
 #endif
 
 #ifdef _MSC_VER
@@ -172,13 +191,15 @@ enum {
     GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
     GS_E_POPN,         /* pop_n of a negative count or more than the length */
+    GS_E_RESIZELEN,    /* resize past a data stack's reservation (32-bit targets) */
 };
 
 GS_API GS_NORETURN void gs_panic(const char *msg);
 GS_API GS_NORETURN void gs_abort(int err, const char *file, int line);
 /* The program's own abort(msg) (§9.3): the message is Goose bytes, not a C
    string, so it goes out with an explicit length. */
-GS_API GS_NORETURN void gs_abort_msg(const uint8_t *msg, int64_t len, const char *file,
+)GSRT"
+R"GSRT(GS_API GS_NORETURN void gs_abort_msg(const uint8_t *msg, int64_t len, const char *file,
                                      int line);
 GS_API GS_NORETURN void gs_exit(int64_t code);
 GS_API GS_NORETURN void gs_idxfail(int64_t i, int64_t n, const char *file, int line);
@@ -190,8 +211,7 @@ GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char 
 GS_API GS_NORETURN void gs_ovf_neg(int64_t a, const char *type, const char *file, int line);
 GS_API GS_NORETURN void gs_asfail_i(const char *why, int64_t v, const char *type,
                                     const char *file, int line);
-)GSRT"
-R"GSRT(GS_API GS_NORETURN void gs_asfail_u(const char *why, uint64_t v, const char *type,
+GS_API GS_NORETURN void gs_asfail_u(const char *why, uint64_t v, const char *type,
                                     const char *file, int line);
 /* f32: d is an f32's value, and takes that type's text form. */
 GS_API GS_NORETURN void gs_asfail_f(const char *why, double d, int f32, const char *type,
@@ -337,7 +357,8 @@ static uint32_t gs_ld32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v;
 static uint64_t gs_ld64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 #endif
 
-/* The low k bytes of a word set (none for k <= 0, all for k >= 8): which
+)GSRT"
+R"GSRT(/* The low k bytes of a word set (none for k <= 0, all for k >= 8): which
    bytes of a little-endian load lie within a length. */
 static uint64_t gs_bytemask(int64_t k) {
     return k >= 8 ? ~(uint64_t)0 : k <= 0 ? 0 : ((uint64_t)1 << (k * 8)) - 1;
@@ -351,8 +372,7 @@ static uint64_t gs_bytemask(int64_t k) {
    overlapping, where the library's memcpy would take a call and a dispatch
    on the length; as the C library's memcpy, it takes runs that do not
    overlap. */
-)GSRT"
-R"GSRT(static void gs_memcpy(void *dst, const void *src, size_t n) {
+static void gs_memcpy(void *dst, const void *src, size_t n) {
     uint8_t *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;
     if (n <= 16) {
@@ -504,7 +524,8 @@ static T gs_sub_##SFX(T a, T b, const char *file, int line) { \
     return (T)r; } \
 static T gs_mul_##SFX(T a, T b, const char *file, int line) { \
     int64_t r = (int64_t)a * (int64_t)b; \
-    if (r < MIN || r > MAX) gs_ovf(a, "*", b, #SFX, file, line); \
+)GSRT"
+R"GSRT(    if (r < MIN || r > MAX) gs_ovf(a, "*", b, #SFX, file, line); \
     return (T)r; } \
 static T gs_neg_##SFX(T a, const char *file, int line) { \
     int64_t r = -(int64_t)a; \
@@ -520,8 +541,7 @@ static T gs_shr_##SFX(T a, int64_t n) { \
 #define GS_INTOPS_U(SFX, T, MAX, BITS) \
 static T gs_add_##SFX(T a, T b) { return (T)(a + b); } \
 static T gs_sub_##SFX(T a, T b) { return (T)(a - b); } \
-)GSRT"
-R"GSRT(static T gs_mul_##SFX(T a, T b) { return (T)((uint64_t)a * (uint64_t)b); } \
+static T gs_mul_##SFX(T a, T b) { return (T)((uint64_t)a * (uint64_t)b); } \
 static T gs_shl_##SFX(T a, int64_t n) { \
     return (T)((uint64_t)a << (n & (BITS - 1))); } \
 static T gs_shr_##SFX(T a, int64_t n) { \
@@ -690,7 +710,8 @@ static uint64_t gs_divu_gen(uint64_t d, uint8_t *more) {
 #endif
 }
 
-static uint64_t gs_divu_q(uint64_t x, uint64_t magic, uint8_t more) {
+)GSRT"
+R"GSRT(static uint64_t gs_divu_q(uint64_t x, uint64_t magic, uint8_t more) {
 #if GS_HAVE_U128
     uint64_t q;
     if (!magic) return x >> more;
@@ -711,8 +732,7 @@ static uint32_t gs_divu32_gen(uint32_t d, uint8_t *more) {
     int k = 31;
     uint64_t n;
     uint32_t m, rem;
-)GSRT"
-R"GSRT(    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
+    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
     while (!(d >> k)) k--;
     if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
     n = (uint64_t)1 << (32 + k);
@@ -876,7 +896,8 @@ static GS_TLS int64_t gs_nstks;
 /* The current program instance's globals (goose_spec.md 11.1), a struct the
    compiler lays out: main's is its one static instance, a worker's a fresh
    copy of the globals its program uses, taken from the spawning instance
-   at spawn like the arguments (11.2). No global is shared between program
+)GSRT"
+R"GSRT(   at spawn like the arguments (11.2). No global is shared between program
    instances; the only C statics a program shares are read-only ones. */
 static GS_TLS void *gs_gl;
 
@@ -896,8 +917,7 @@ static void gs_stack_block(int64_t n) {
 }
 
 /* The compiler passes the main program's stack count and the most regions
-)GSRT"
-R"GSRT(   it and any one worker hold: their stacks plus the dedicated ones of the
+   it and any one worker hold: their stacks plus the dedicated ones of the
    globals and of a worker's arguments. */
 static void gs_rt_init(int argc, char **argv, int64_t mainstacks, int64_t mainregions,
                        int64_t workerregions) {
@@ -1080,7 +1100,8 @@ static int gs_is_le(void) {
     return *(const uint8_t *)&one == 1;
 }
 
-/* ---------------------------------------------------------------------------
+)GSRT"
+R"GSRT(/* ---------------------------------------------------------------------------
    Text forms (§3.7): the gs_fmt_* functions write a value's text at dst and
    return the byte count (at most GS_FMT_MAX); print/str/format are built on
    them. A float takes the shortest form that still round-trips. */
@@ -1096,8 +1117,7 @@ GS_API int64_t gs_fmt_bool(uint8_t *dst, int64_t v);
 GS_API int64_t gs_fmt_quoted(uint8_t *dst, const uint8_t *s, int64_t n);
 
 /* print(...) (§3.7): each argument's text, then a newline. */
-)GSRT"
-R"GSRT(GS_API void gs_out_int(int64_t v);
+GS_API void gs_out_int(int64_t v);
 GS_API void gs_out_uint(uint64_t v);
 GS_API void gs_out_flt(double v);
 GS_API void gs_out_f32(float v);
@@ -1137,6 +1157,7 @@ static const char *gs_errmsgs[] = {
     "slice not from this pool",
     "non-null relative reference encodes as null",
     "pop_n count negative or beyond the array's length",
+    "resize to more than a data stack holds",
 };
 
 /* Ends the process with `code`, its streams flushed: every runtime error
@@ -1308,10 +1329,10 @@ static size_t gs_overflow_text(char *buf, const gs_region *r) {
         p = gs_dec(p, (uint64_t)gs_current_thread_id);
         p = gs_text(p, "'s");
     }
-    p = gs_text(p, " data stacks grew past the ");
-    p = gs_size(p, r->usable);
 )GSRT"
-R"GSRT(    p = gs_text(p, " reserved for it");
+R"GSRT(    p = gs_text(p, " data stacks grew past the ");
+    p = gs_size(p, r->usable);
+    p = gs_text(p, " reserved for it");
     if (r->usable < gs_region_reserve) {
         p = gs_text(p, " (halved from ");
         p = gs_size(p, gs_region_reserve);
@@ -1520,9 +1541,9 @@ static size_t gs_sigstack_size(void) {
     return SIGSTKSZ > GS_SIGSTACK_MIN ? (size_t)SIGSTKSZ : (size_t)GS_SIGSTACK_MIN;
 }
 
-/* Run by each thread program's thread as it starts: an alternate stack for
 )GSRT"
-R"GSRT(   the fault handler, unless the thread has one (ASan gives every thread its
+R"GSRT(/* Run by each thread program's thread as it starts: an alternate stack for
+   the fault handler, unless the thread has one (ASan gives every thread its
    own), and the bounds of the thread's stack. */
 static void gs_native_stack_init(void) {
     stack_t ss;
@@ -1732,9 +1753,9 @@ static void gs_sp_fix(gs_sppath *p, int64_t from) {
     for (l = from - 1; l >= 0; l--) {
         gs_spinner *in = GS_SPINNER(p, p->node[l]);
         int64_t c = p->node[l + 1], k = p->pos[l];
-        int leaf = l + 1 == p->h;
 )GSRT"
-R"GSRT(        int64_t key = gs_sp_key(p, c, leaf), max = gs_sp_max(p, c, leaf);
+R"GSRT(        int leaf = l + 1 == p->h;
+        int64_t key = gs_sp_key(p, c, leaf), max = gs_sp_max(p, c, leaf);
         if (in->key[k] == key && in->max[k] == max) return;
         in->key[k] = key;
         in->max[k] = max;

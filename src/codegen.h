@@ -412,6 +412,9 @@ struct CodeGen {
     // GS_MAX_STACKS as the program is configured (main.cpp): the most data
     // stacks one thread program may use at once, zero for no limit.
     int64_t maxstacks = 0;
+    // The C compiler's pointer size, which plain references and slices take
+    // in a layout (FixedSize): 8, or 4 on a 32-bit target.
+    int64_t ptrsize = 8;
     void NoteStackCall(FnSpec *callee, Line ln) {
         stackcalls[curspec].push_back({ callee, stknext, ln });
     }
@@ -1335,8 +1338,10 @@ struct CodeGen {
     // process state that the driver must install before constructing us.
     // A function the extern support declares gets no prototype here.
     CodeGen(Ast &_ast, string_view runtime_ext_text, const vector<string> &headers,
-            bool _norfcheck = false, bool _library = false, int64_t _maxstacks = 0)
-        : ast(_ast), library(_library), norfcheck(_norfcheck), maxstacks(_maxstacks) {
+            bool _norfcheck = false, bool _library = false, int64_t _maxstacks = 0,
+            int64_t _ptrsize = 8)
+        : ast(_ast), library(_library), norfcheck(_norfcheck), maxstacks(_maxstacks),
+          ptrsize(_ptrsize) {
         for (auto t : ast.alltypes)
             if (t->kind == TY_REF && t->ref->pool) poolglobals.insert(t->ref->pool);
         ComputeRelRootMax();
@@ -1362,6 +1367,10 @@ struct CodeGen {
         EmitExports();
         if (!library) EmitMain();
         if (usesthreads) predefs = "#define GS_NEED_THREADS 1\n";
+        // The layouts hold the C compiler's pointers at this size
+        // (FixedSize): C built for another fails to compile here.
+        Append(predefs, "typedef char gs_built_for_", ptrsize, "_byte_pointers[sizeof(void *) == ",
+               ptrsize, " ? 1 : -1];\n");
         // The instance block: with workers each thread reaches its own
         // through gs_gl; without them there is only main's.
         Append(data, "typedef struct {\n", gblock.empty() ? "    uint8_t gs_none;\n" : gblock,

@@ -33,6 +33,12 @@ int main(int argc, char **argv) {
     }
     const char *out = NULL, *object = NULL;
     int compile = 0;
+    /* goose build's question for the pointer size (TargetPointerSize). */
+    for (int i = 1; i < argc; ++i)
+        if (!strcmp(argv[i], "-E") || !strcmp(argv[i], "/EP")) {
+            printf("gs_pointer_size %d\n", (int)sizeof(void *));
+            return 0;
+        }
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "-c") || !strcmp(argv[i], "/c")) compile = 1;
         else if (!strcmp(argv[i], "-o") && i + 1 < argc) out = argv[++i];
