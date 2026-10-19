@@ -256,8 +256,9 @@ inline bool BuildCMakePart(const Ast &ast, int pkg, const Builder &b, bool wantj
                                  "CMakeLists.txt). Install CMake 3.20 or later.") };
     #ifdef _WIN32
         // The MSVC environment (rc, link, the headers), for whichever
-        // compiler builds it.
-        ImportVcvars(false);
+        // compiler builds it, unless one is set up already: an x86 prompt's
+        // libraries are the ones an x86 cl links with.
+        if (FindOnPath("cl").empty()) ImportVcvars(false);
     #endif
     auto wrapper = cat(out.dir, "/wrapper");
     auto builddir = cat(out.dir, "/cmake");
