@@ -99,8 +99,8 @@
 #define GS_STACK_BUDGET_32 (2048ull << 20)
 #define GS_STACK_BUDGET GS_STACK_BUDGET_32
 #else
-#define GS_STACK_BUDGET_32 (1024ull << 20)  /* What --stacks reports is the first. */
-#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#define GS_STACK_BUDGET_32_WINDOWS (1024ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32_WINDOWS
 #endif
 #endif
 #ifndef GS_STACK_STATS

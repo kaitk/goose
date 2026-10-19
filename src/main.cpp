@@ -778,15 +778,15 @@ bool ParseConfigValue(string s, uint64_t &out) {
 
 // The data stack configuration the generated program compiles with, for
 // the --stacks report: the runtime's defaults (runtime.h) for the pointer
-// size, then the -D given, --stack-reserve's among them. A -D the compiler
-// cannot read keeps the default in the report; the C compiler sees it either
-// way.
+// size and, at 4 bytes, this platform, then the -D given, --stack-reserve's
+// among them. A -D the compiler cannot read keeps the default in the
+// report; the C compiler sees it either way.
 CodeGen::StackConfig StackConfigOf(const vector<string> &cdefines, int64_t ptrsize) {
     string_view runtime;
     for (auto &rf : runtime_files)
         if (string_view(rf.name) == "runtime.h") runtime = rf.text;
-    auto value = [&](const char *name, uint64_t &out, bool has32 = false) {
-        auto key = cat("#define ", name, ptrsize == 4 && has32 ? "_32 " : " ");
+    auto value = [&](const char *name, uint64_t &out, const char *suffix32 = "") {
+        auto key = cat("#define ", name, ptrsize == 4 ? suffix32 : "", " ");
         if (auto at = runtime.find(key); at != string_view::npos) {
             auto line = runtime.substr(at + key.size());
             line = line.substr(0, line.find('\n'));
@@ -801,9 +801,13 @@ CodeGen::StackConfig StackConfigOf(const vector<string> &cdefines, int64_t ptrsi
     };
     CodeGen::StackConfig cfg { 0, 0, 0, 0 };
     uint64_t maxstacks = 0;
-    value("GS_STACK_RESERVE", cfg.reserve, true);
+    value("GS_STACK_RESERVE", cfg.reserve, "_32");
     value("GS_STACK_GAP", cfg.gap);
-    value("GS_STACK_BUDGET", cfg.budget, true);
+    #ifdef _WIN32
+        value("GS_STACK_BUDGET", cfg.budget, "_32_WINDOWS");
+    #else
+        value("GS_STACK_BUDGET", cfg.budget, "_32");
+    #endif
     value("GS_MAX_STACKS", maxstacks);
     cfg.maxstacks = (int64_t)maxstacks;
     return cfg;

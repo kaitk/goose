@@ -3834,7 +3834,8 @@ reference two pointers. `goose build` asks the C compiler for the size once
 per toolchain (`TargetPointerSize`); C written with `-o` takes this
 machine's, or `--pointer-size`'s. The C fails to compile under any other
 size (`gs_built_for_N_byte_pointers`). A 32-bit target also reserves less per
-data stack by default (`GS_STACK_RESERVE_32`, `GS_STACK_BUDGET_32`).
+data stack by default (`GS_STACK_RESERVE_32`, `GS_STACK_BUDGET_32`, and
+`GS_STACK_BUDGET_32_WINDOWS` in a Windows program's 2 GB).
 
 Values are packed, so a pointer to a scalar may be misaligned. Codegen spells
 one with the scalar's `gs_ua_` type (`CodeGen::PT`), which the C and an
