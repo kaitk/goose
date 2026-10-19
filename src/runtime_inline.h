@@ -105,9 +105,9 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
-/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB, and
-   the defaults there leave room for a few dozen regions and the rest of the
-   program. */
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB and
+   a Windows one 2 GB, and the defaults there leave room for a few dozen
+   regions and the rest of the program. */
 #ifndef GS_STACK_RESERVE
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
@@ -127,6 +127,9 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #ifndef GS_STACK_BUDGET
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#elif defined(_WIN32)
+#define GS_STACK_BUDGET_32_WINDOWS (1024ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32_WINDOWS
 #else
 #define GS_STACK_BUDGET_32 (2048ull << 20)
 #define GS_STACK_BUDGET GS_STACK_BUDGET_32
@@ -200,10 +203,10 @@ enum {
     GS_E_THREADID,     /* thread_wait on an unknown thread id */
     GS_E_THREADSELF,   /* a worker cannot wait for itself */
     GS_E_TAG,          /* corrupt ADT tag (debug builds only) */
-    GS_E_ENDIAN,       /* serialization on a big-endian host */
-    GS_E_SLICELEN,     /* slice pool length negative or beyond any data stack */
 )GSRT"
-R"GSRT(    GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
+R"GSRT(    GS_E_ENDIAN,       /* serialization on a big-endian host */
+    GS_E_SLICELEN,     /* slice pool length negative or beyond any data stack */
+    GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
     GS_E_POPN,         /* pop_n of a negative count or more than the length */
 };
@@ -353,9 +356,9 @@ static inline int gs_simd_level(void) {
      : GS_KSZ(n, 3, 3) ? (void)(GS_AT(uint16_t, d, 0) = 0, GS_AT(uint8_t, d, 2) = 0) \
      : GS_KSZ(n, 5, 7) ? (void)(GS_AT(uint32_t, d, 0) = 0, GS_AT(uint32_t, d, (n) - 4) = 0) \
      : GS_KSZ(n, 9, 16) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
-     : GS_KSZ(n, 17, 32) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, 8) = 0, \
 )GSRT"
-R"GSRT(                                  GS_AT(uint64_t, d, (n) - 16) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
+R"GSRT(     : GS_KSZ(n, 17, 32) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, 8) = 0, \
+                                  GS_AT(uint64_t, d, (n) - 16) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
      : (void)memset((d), 0, (n)))
 #else
 #define GS_MEMCPY(d, s, n) memcpy((d), (s), (n))
@@ -521,12 +524,12 @@ GS_DIVOPS_S(i32, int32_t, INT32_MIN, INT32_MAX)
 #define gs_div_i16(a, b, f, l) GS_DIVS(int16_t, a, b, f, l)
 #define gs_div_i32(a, b, f, l) GS_DIVS(int32_t, a, b, f, l)
 #endif
-
+)GSRT"
+R"GSRT(
 #if GS_DEBUG
 
 /* Signed narrow types (8/16/32 bits): 64-bit signed math covers every
-)GSRT"
-R"GSRT(   intermediate result. */
+   intermediate result. */
 #define GS_INTOPS_S(SFX, T, MIN, MAX, BITS) \
 static T gs_add_##SFX(T a, T b, const char *file, int line) { \
     int64_t r = (int64_t)a + (int64_t)b; \
@@ -701,10 +704,10 @@ static uint64_t gs_divu_gen(uint64_t d, uint8_t *more) {
 #if GS_HAVE_U128
     int k = 63;
     uint64_t rem, m;
-    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
-    while (!(d >> k)) k--;
 )GSRT"
-R"GSRT(    if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
+R"GSRT(    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
+    while (!(d >> k)) k--;
+    if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
     /* floor(2^(64+k) / d), which fits since d > 2^k; then the smallest
        power that works, or the 65-bit form one past it. */
     m = gs_div128_u64((uint64_t)1 << k, d, &rem);
@@ -894,10 +897,10 @@ typedef struct gs_qstate *gs_queue;
 #define GS_QUEUE_INIT NULL
 
 GS_API void gs_qinit(gs_queue *q);
-GS_API void gs_qput(gs_queue *q, const void *data, int64_t size);
-GS_API gs_qnode *gs_qget(gs_queue *q);
 )GSRT"
-R"GSRT(GS_API gs_qnode *gs_qpoll(gs_queue *q);
+R"GSRT(GS_API void gs_qput(gs_queue *q, const void *data, int64_t size);
+GS_API gs_qnode *gs_qget(gs_queue *q);
+GS_API gs_qnode *gs_qpoll(gs_queue *q);
 
 #ifndef GS_RUNTIME_OBJECT
 
@@ -1099,9 +1102,9 @@ static int64_t gs_zig_check(const uint8_t *p, const uint8_t *end, int64_t *out) 
    elements need it -- for fixed ones a start is a multiple of the size. The
    bitmap is one data stack's worth of scratch, so the largest image that can
    be verified is eight times a stack's reservation; from_bytes rejects a
-   larger one rather than growing into the guard region. */
 )GSRT"
-R"GSRT(#define GS_BM_SET(bm, i) ((bm)[(uint64_t)(i) >> 3] |= (uint8_t)(1u << ((i) & 7)))
+R"GSRT(   larger one rather than growing into the guard region. */
+#define GS_BM_SET(bm, i) ((bm)[(uint64_t)(i) >> 3] |= (uint8_t)(1u << ((i) & 7)))
 #define GS_BM_GET(bm, i) (((bm)[(uint64_t)(i) >> 3] >> ((i) & 7)) & 1)
 #define GS_BM_MAX ((int64_t)(GS_STACK_RESERVE))
 

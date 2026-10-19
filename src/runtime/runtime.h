@@ -93,9 +93,9 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
-/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB, and
-   the defaults there leave room for a few dozen regions and the rest of the
-   program. */
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB and
+   a Windows one 2 GB, and the defaults there leave room for a few dozen
+   regions and the rest of the program. */
 #ifndef GS_STACK_RESERVE
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
@@ -115,6 +115,9 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #ifndef GS_STACK_BUDGET
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#elif defined(_WIN32)
+#define GS_STACK_BUDGET_32_WINDOWS (1024ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32_WINDOWS
 #else
 #define GS_STACK_BUDGET_32 (2048ull << 20)
 #define GS_STACK_BUDGET GS_STACK_BUDGET_32
