@@ -1535,9 +1535,21 @@ static struct sigaction gs_prev_segv, gs_prev_bus;
 static void gs_fault_handler(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     uint8_t *hit = (uint8_t *)info->si_addr;
-    for (long i = 0; i < gs_nregions; i++) {
+    /* A misaligned access overflows nothing, wherever it points: 32-bit ARM
+       faults on some of them, and those take the default action. Linux
+       alone is believed: macOS reports a guard page's fault as BUS_ADRALN. */
+    #if defined(__linux__) && defined(BUS_ADRALN)
+        if (sig == SIGBUS && info->si_code == BUS_ADRALN) {
+            sigaction(sig, &gs_prev_bus, NULL);
+            return;
+        }
+    #endif
+)GSRT"
+R"GSRT(    for (long i = 0; i < gs_nregions; i++) {
         const gs_region *r = &gs_regions[i];
-        if ((uintptr_t)hit - (uintptr_t)r->base < r->size) {
+        /* The usable part is mapped, so only a fault in the gap is growth. */
+        uint8_t *gap = r->base + r->usable;
+        if ((uintptr_t)hit - (uintptr_t)gap < r->size - r->usable) {
             char msg[GS_OVERFLOW_TEXT];
             ssize_t w = write(2, msg, gs_overflow_text(msg, r));
             (void)w;
@@ -1545,8 +1557,7 @@ static void gs_fault_handler(int sig, siginfo_t *info, void *ctx) {
         }
     }
     if ((uintptr_t)hit - gs_native_lo < gs_native_hi - gs_native_lo) {
-)GSRT"
-R"GSRT(        static const char msg[] = "goose runtime error: native call stack overflow\n";
+        static const char msg[] = "goose runtime error: native call stack overflow\n";
         ssize_t w = write(2, msg, sizeof(msg) - 1);
         (void)w;
         _exit(1);
@@ -1735,7 +1746,8 @@ GS_API uint8_t *gs_reserve_region(void) {
 /* `link` chains emptied nodes. */
 typedef struct { int64_t n, link, idx[GS_SPAN_LEAF], cnt[GS_SPAN_LEAF]; } gs_spleaf;
 typedef struct { int64_t n, link, key[GS_SPAN_FAN], max[GS_SPAN_FAN], child[GS_SPAN_FAN]; } gs_spinner;
-typedef struct { int64_t root, height, chain; } gs_sphead;
+)GSRT"
+R"GSRT(typedef struct { int64_t root, height, chain; } gs_sphead;
 
 /* A freelist, and a path down it: the node and entry taken at each level,
    the leaf's last. */
@@ -1752,8 +1764,7 @@ typedef struct {
 
 static int64_t gs_sp_newnode(gs_sppath *p) {
     int64_t i = GS_SPHEAD(p)->chain;
-)GSRT"
-R"GSRT(    if (i) {
+    if (i) {
         GS_SPHEAD(p)->chain = GS_SPLEAF(p, i)->link;
         return i;
     }
@@ -1971,7 +1982,8 @@ static void gs_sp_delete(gs_sppath *p, int64_t k) {
 /* Takes cnt elements off the front of the span at position k of the path's
    leaf, or the whole span where it holds no more. */
 static void gs_sp_take(gs_sppath *p, int64_t k, int64_t cnt) {
-    gs_spleaf *lf = GS_SPLEAF(p, p->node[p->h]);
+)GSRT"
+R"GSRT(    gs_spleaf *lf = GS_SPLEAF(p, p->node[p->h]);
     if (lf->cnt[k] <= cnt) {
         gs_sp_delete(p, k);
         return;
@@ -1987,8 +1999,7 @@ static void gs_sp_take(gs_sppath *p, int64_t k, int64_t cnt) {
    than best: in index order it packs runs toward the start and leaves the
    end free. */
 GS_API int64_t gs_spans_alloc(uint8_t *base, int64_t *n, uint8_t **top, int64_t len,
-)GSRT"
-R"GSRT(                              int64_t cnt) {
+                              int64_t cnt) {
     gs_sppath p;
     int64_t l, i, k, idx;
     gs_spleaf *lf;
@@ -2201,7 +2212,8 @@ static int gs_ctz32(unsigned x) {
 
 static int gs_cpu_ssse3;
 
-static void gs_scan_init(void) {
+)GSRT"
+R"GSRT(static void gs_scan_init(void) {
 #ifdef _WIN32
     int r[4];
     __cpuid(r, 1);
@@ -2219,8 +2231,7 @@ typedef struct { __m128i a, b, c, flip; } gs_bsm;
 static GS_INLINE void gs_bsm_init(gs_bsm *m, const gs_byteset *s, int tables) {
     if (tables) {
         m->a = _mm_loadu_si128((const __m128i *)s->lo);
-)GSRT"
-R"GSRT(        m->b = _mm_loadu_si128((const __m128i *)s->hi);
+        m->b = _mm_loadu_si128((const __m128i *)s->hi);
         m->c = _mm_setr_epi8(1, 2, 4, 8, 16, 32, 64, -128, 1, 2, 4, 8, 16, 32, 64, -128);
         m->flip = _mm_setzero_si128();
     } else {
@@ -2376,7 +2387,8 @@ GS_API int64_t gs_scan_pair(const uint8_t *p, int64_t n, const void *a, int64_t 
     if (np >= 16 && sa->kind != 5 && sb->kind != 5) return gs_scan_pair_blocks(p, np, sa, d, sb);
     if (np >= 16 && gs_cpu_ssse3) return gs_scan_pair_tables(p, np, sa, d, sb);
 #endif
-    return gs_scan_pair_bytes(p, np, sa, d, sb);
+)GSRT"
+R"GSRT(    return gs_scan_pair_bytes(p, np, sa, d, sb);
 }
 
 GS_API void gs_rt_start(int argc, char **argv, uint64_t reserve, uint64_t gap,
@@ -2389,8 +2401,7 @@ GS_API void gs_rt_start(int argc, char **argv, uint64_t reserve, uint64_t gap,
     gs_mainregions = mainregions;
     gs_workerregions = workerregions;
     /* The workers the budget holds beside the main program, each at the
-)GSRT"
-R"GSRT(       most regions one can take: what hardware_threads() reports at most.
+       most regions one can take: what hardware_threads() reports at most.
        At least one, so a program sized by it still runs; the regions the
        platform then refuses are retried smaller (gs_reserve_region). */
     if (workerregions > 0) {
@@ -2587,7 +2598,8 @@ static int gs_float_digits(uint64_t f, int e, int bits, int emin, char *dig, int
         }
         c = gs_big_cmp(&r, mm);
         low = even ? c <= 0 : c < 0;
-        gs_big_add(&t, &r, &mp);
+)GSRT"
+R"GSRT(        gs_big_add(&t, &r, &mp);
         c = gs_big_cmp(&t, &s);
         high = even ? c >= 0 : c > 0;
         if (!low && !high) {
@@ -2604,8 +2616,7 @@ static int gs_float_digits(uint64_t f, int e, int bits, int emin, char *dig, int
         dig[n++] = (char)('0' + d + high);
         return n;
     }
-)GSRT"
-R"GSRT(}
+}
 
 /* The text of a finite float from its fields: the sign, the significand
    without its implicit bit and the biased exponent, for a type of `bits`
