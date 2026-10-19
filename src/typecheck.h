@@ -2192,7 +2192,8 @@ struct TypeCheck {
     Val RetAltVal(FnSpec *spec, const RootAlt &alt, vector<Val> &argvals, TypeExpr *t, Node *at);
     Val CallResult(Call *c, FnSpec *spec, vector<Val> &argvals);
     void CheckReturn(Return *r);
-    FnSpec *EnsureThreadSpec(SFunction *sf, Line l);
+    FnSpec *EnsureThreadSpec(SFunction *sf, const vector<pair<string_view, FnValBind>> &fnvals,
+                             Line l);
 
     // ------------------------------------------------------------------
     // Struct and variant literals (§4.2). The per-node entry is
@@ -2754,12 +2755,13 @@ struct TypeCheck {
         // that no spawn reached.
         for (size_t i = 0; i < ast.functions.size(); i++) {
             auto sf = ast.functions[i];
-            if (sf->isthread) EnsureThreadSpec(sf, sf->line);
+            if (sf->isthread) EnsureThreadSpec(sf, {}, sf->line);
         }
         // Thread programs may not touch globals: that would be shared mutable
         // memory between programs (§11.2).
         for (auto sf : ast.functions)
-            if (sf->isthread && !sf->specs.empty()) CheckThreadGlobals(sf->specs[0]);
+            if (sf->isthread)
+                for (auto spec : sf->specs) CheckThreadGlobals(spec);
         // NOTE: in this compilation model, code no call reaches would never be
         // typechecked at all. That is right for generic functions (they need a
         // caller's types), but silently skipping plain dead code makes for a

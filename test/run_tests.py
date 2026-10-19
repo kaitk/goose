@@ -1659,6 +1659,13 @@ def main():
         r"^thread cap: 1 workers \(\(1 - \d+\) / \d+\), what hardware_threads\(\) reports at most$",
         r"^fn worker: [1-9]\d* own, \d+ with callees$",
     ])
+    # Each binding of a thread_fn's function parameters is a program of its own.
+    r.show_task(stacks_report, HERE / "threads" / "thread_fn_values.goose", [
+        r"^worker `watch<W = serve>`: [1-9]\d* data stacks",
+        r"^worker `watch<W = tick>`: [1-9]\d* data stacks",
+        r"^worker `both<F = twice, G = square>`: [1-9]\d* data stacks",
+        r"^worker `both<F = square, G = twice>`: [1-9]\d* data stacks",
+    ])
     r.show_task(stacks_report, HERE / "codegen" / "cycle_scratch_locals.goose", [
         r"^data stacks: .*, GS_MAX_STACKS 4$",
         r"^main program: [1-4] data stacks \+ 0 global stacks = [1-4] regions$",

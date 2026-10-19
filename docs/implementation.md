@@ -256,7 +256,9 @@ reference types, validates every non-generic struct and enum declaration,
 checks the global initializers in order (a `var` global declared with only
 a type gets its type's default value there, `DefaultValue`, which the rest
 of the compiler sees as written), then `main`, then every
-`thread_fn`, and finally eligible functions nothing reached (`CheckUnreached`).
+`thread_fn` (one with function parameters only per binding a spawn passes,
+`EnsureThreadSpec`), and finally eligible functions nothing reached
+(`CheckUnreached`).
 That last check covers only top-level functions with fully annotated
 parameters, no generics, and no syntactically detected `return from` to an
 outside target. Unused generic and nested bodies are checked only when
@@ -4326,7 +4328,9 @@ object (`StructLitAt`), its `gs_empty` byte or its pads.
 
 ### 6.8 Threads and queues
 
-`thread_spawn` packs the flat arguments contiguously on a scratch stack, then
+A thread program is a `thread_fn`'s specialization: one, or one per binding
+of its function parameters, each with a thunk of its own. `thread_spawn`
+packs the flat arguments contiguously on a scratch stack, then
 the worker program's globals as `[size][image]` records (a resizable's image
 is its count, its fixed fields and its tail's elements; a pool's carries its
 freelist), and hands the packet to the runtime; the generated thunk

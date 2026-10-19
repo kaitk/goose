@@ -3388,16 +3388,31 @@ inline void TypeCheck::CheckReturn(Return *r) {
 }
 
 // ------------------------------------------------------------------
-// Thread entry points (§11.2): one specialization per thread_fn, whose
-// body is checked like any other, reached from a spawn or from the
-// driver rather than from a call.
+// Thread entry points (§11.2): one specialization per thread_fn and binding
+// of its function parameters, whose body is checked like any other, reached
+// from a spawn or from the driver rather than from a call. Without the
+// bindings, a thread_fn with function parameters has only its declaration
+// checked, and gets no specialization.
 
-inline FnSpec *TypeCheck::EnsureThreadSpec(SFunction *sf, Line l) {
-    if (!sf->specs.empty()) return sf->specs[0];
-    if (!sf->generics.empty()) Error(l, cat("thread_fn ", sf->name, " cannot be generic"));
+inline FnSpec *TypeCheck::EnsureThreadSpec(SFunction *sf,
+                                           const vector<pair<string_view, FnValBind>> &fnvals,
+                                           Line l) {
+    for (auto spec : sf->specs) {
+        auto same = spec->fnvals.size() == fnvals.size();
+        for (size_t i = 0; same && i < fnvals.size(); i++)
+            same = spec->fnvals[i].second == fnvals[i].second;
+        if (same) return spec;
+    }
+    for (auto &g : sf->generics)
+        for (auto &p : sf->params)
+            if (p.type && NamesGeneric(p.type, g.name))
+                Error(l, cat("thread_fn ", sf->name, " cannot be generic over a type (", g.name,
+                             "); its generic parameters take function values only"));
     if (sf->has_rets) Error(l, cat("thread_fn ", sf->name, " cannot return values"));
+    if (fnvals.size() != sf->generics.size()) return nullptr;
     auto spec = ast.NewFnSpec();
     spec->sf = sf;
+    spec->fnvals = fnvals;
     for (auto &p : sf->params) {
         if (!p.type)
             Error(l, cat("thread_fn ", sf->name, " needs fully typed parameters"));

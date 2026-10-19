@@ -3766,6 +3766,15 @@ the Linda tuple-space / coordination style.
   between thread programs / the main program only when all its stack
   references arrive via (hidden) arguments; any static stack use
   re-specializes it per program, exactly like a template instantiation.
+* A `thread_fn`'s generic parameters take function values only (§7.6), not
+  types: `thread_fn watch<W>(lane: i64)`. A spawn binds them with its last
+  arguments, as a call does, `thread_spawn(watch, lane, serve)`, and each
+  must name a top-level function or a function parameter bound to one, since
+  a block or nested function would reach the spawner's locals. Each binding
+  is a thread program of its own, as each is a specialization of a generic
+  function (§7.7). The worker calls or spawns what it is handed, so
+  `while !thread_wait(thread_spawn_contained(W, lane)) {}` in `watch`
+  restarts whichever worker it was given each time that one aborts.
 * Worker count is decided **at runtime** (no static maximum):
   `thread_spawn(worker, args…) -> i64` reserves a fresh stack block, copies
   the args, starts the worker, and returns its id. `worker` names a

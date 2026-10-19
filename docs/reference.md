@@ -3477,6 +3477,36 @@ program, and a worker that a contained one starts with `thread_spawn` is
 not contained. Files and other resources opened through `extern fn` stay
 open. Spec §11.2.
 
+### Workers handed a function
+
+A `thread_fn` can take function values as generic parameters, as any
+function can ([section 18](#function-values)), though not types. The
+spawn passes them last, as a call does. A watcher can then restart
+whichever worker it is handed:
+
+<!-- check-only -->
+```goose
+thread_fn serve(lane: i64) {
+    assert(lane >= 0);
+    print("lane ", lane, " served");
+}
+
+thread_fn watch<W>(lane: i64) {
+    while !thread_wait(thread_spawn_contained(W, lane)) {
+        print("lane ", lane, " restarts");
+    }
+}
+
+fn main() {
+    thread_wait(thread_spawn(watch, 1, serve));
+}
+```
+
+Each binding is a thread program of its own, as each is a specialization
+of a generic function. A function passed this way must be a top-level one,
+or a function parameter bound to one: a block or a nested function would
+reach the spawner's locals. Spec §11.2.
+
 ---
 
 ## 23. Serialization

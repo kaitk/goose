@@ -1,0 +1,9 @@
+lane 1 job 3
+restart lane 1
+lane 1 job 4
+tick 2
+tick 3
+twice 6
+square 9
+square 16
+twice 8

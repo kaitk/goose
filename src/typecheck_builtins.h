@@ -76,10 +76,36 @@ inline Val TypeCheck::CheckBuiltin(Call *c, const BuiltinDef &d, vector<Node *> 
             if (!wsf) Error(c, cat(d.name, "'s first argument names a thread_fn"));
             wid->fnref = wsf;
             wid->exprtype = fntype;
-            auto spec = EnsureThreadSpec(wsf, c->line);
-            if (args.size() != 1 + spec->argtypes.size())
-                Error(c, cat(d.name, "(", wsf->name, ", ...) takes ",
-                             (int64_t)spec->argtypes.size(), " worker argument(s)"));
+            auto nfn = wsf->generics.size();
+            auto counterr = [&](size_t nargs) {
+                Error(c, cat(d.name, "(", wsf->name, ", ...) takes ", (int64_t)nargs,
+                             " worker argument(s)",
+                             nfn ? cat(" and ", (int64_t)nfn, " function value(s)") : ""));
+            };
+            auto spec = EnsureThreadSpec(wsf, {}, c->line);
+            if (!spec) {
+                // The worker's function parameters bind to the last
+                // arguments, as at a call (§7.6): names of top-level
+                // functions, since a block or nested function would reach
+                // the spawner's locals.
+                if (args.size() < 1 + nfn) counterr(wsf->params.size());
+                vector<pair<string_view, FnValBind>> fnvals;
+                for (size_t k = 0; k < nfn; k++) {
+                    auto a = args[args.size() - nfn + k];
+                    auto fv = CheckV(a, nullptr);
+                    if (fv.type != fntype) counterr(wsf->params.size());
+                    auto nested = fv.fnv.named && fv.fnv.named->isnested;
+                    if (fv.fnv.set)
+                        for (auto sf : *fv.fnv.set) nested |= sf->isnested;
+                    if (fv.fnv.fv || nested)
+                        Error(a, cat("thread_fn ", wsf->name, "'s ", wsf->generics[k].name,
+                                     " must name a top-level function, not a block or nested "
+                                     "function (§11.2)"));
+                    fnvals.push_back({ wsf->generics[k].name, fv.fnv });
+                }
+                spec = EnsureThreadSpec(wsf, fnvals, c->line);
+            }
+            if (args.size() != 1 + spec->argtypes.size() + nfn) counterr(spec->argtypes.size());
             {
                 DestScope ds(*this, Dest {});
                 for (size_t i = 0; i < spec->argtypes.size(); i++) {

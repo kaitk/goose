@@ -224,12 +224,14 @@ struct Optimizer {
     }
 
     // What the program runs from: main, the thread entry points, and every
-    // tree outside a function body.
+    // tree outside a function body. A thread_fn with function parameters is
+    // reached from its spawns, one specialization per binding.
     void ReachRoots() {
         auto mainsf = ast.MainFunction();
         if (mainsf && !mainsf->specs.empty()) Reach(mainsf->specs[0]);
         for (auto sf : ast.functions)
-            if ((sf->isthread || sf->isexport) && !sf->specs.empty()) Reach(sf->specs[0]);
+            if (((sf->isthread && sf->generics.empty()) || sf->isexport) && !sf->specs.empty())
+                Reach(sf->specs[0]);
         ast.ForEachRootTree([&](Node *n) { ReachTree(n); });
     }
 

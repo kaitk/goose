@@ -234,8 +234,10 @@ internal error should any program hold a data stack across such a call.
 that `hardware_threads()` reports its floor of one wherever it runs, and
 `stack_stats.goose` has its program report its stack use
 (`GS_STACK_STATS`), checked through `expected/stack_stats.stderr`. The
-runner also checks the `--stacks` report of `thread_cap.goose` and
-`cycle_scratch_locals.goose` for its shape, not its counts. A fixture
+runner also checks the `--stacks` report of `thread_cap.goose`,
+`cycle_scratch_locals.goose`, and `thread_fn_values.goose`, which names a
+thread program per binding of a `thread_fn`'s function parameters, for its
+shape, not its counts. A fixture
 expecting a debug-only abort sets `GS_DEBUG=1` the same way, which makes
 every run of it a debug build: `cast_abort_location.goose` and
 `overflow_abort_location.goose` check the location a failing check reports,

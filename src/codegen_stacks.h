@@ -91,11 +91,19 @@ inline vector<FnSpec *> CodeGen::MainRoots() {
     return roots;
 }
 
-// The thread programs, by their entry's name: the order the generated C
-// and the report take them in.
+// The thread programs, by their entry's name, with its function parameters'
+// bindings (`watch<W = serve>`): the order the generated C and the report
+// take them in.
 inline vector<pair<string, FnSpec *>> CodeGen::WorkerEntries() {
     vector<pair<string, FnSpec *>> workers;
-    for (auto &[sp, name] : thunks) workers.push_back({ string(sp->sf->qname), sp });
+    for (auto &[sp, thunk] : thunks) {
+        string name(sp->sf->qname);
+        for (size_t i = 0; i < sp->fnvals.size(); i++)
+            Append(name, i ? ", " : "<", sp->fnvals[i].first, " = ",
+                   sp->fnvals[i].second.named->qname);
+        if (!sp->fnvals.empty()) name += ">";
+        workers.push_back({ name, sp });
+    }
     sort(workers.begin(), workers.end());
     return workers;
 }
