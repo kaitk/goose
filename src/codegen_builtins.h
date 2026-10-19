@@ -364,6 +364,12 @@ inline vector<string> CodeGen::EmitBuiltin(Call *c, Dst d0) {
             // INT64_MAX casts negative and is rejected here as well.
             L("if ((int64_t)(", nn, ") < 0) gs_abort(GS_E_RESIZENEG, ", LocArgs(ln),
               ");");
+            // A 64-bit target's guard gap stops a resize too large for its
+            // stack. A 32-bit one's byte count can wrap, and the elements
+            // land in another stack's region.
+            if (ptrsize == 4 && esz)
+                L("if ((uint64_t)(", nn, ") > GS_STACK_RESERVE / ", esz,
+                  ") gs_abort(GS_E_RESIZELEN, ", LocArgs(ln), ");");
             L("if (", nn, " < ", ol, ") {");
             ind++;
             L(v.lenlv, " = (", LenCast(lv), ")", nn, ";");

@@ -200,6 +200,46 @@ inline string RuntimeObject(const Builder &b) {
     return obj;
 }
 
+// The size of a pointer in the C the toolchain compiles, 8 or 4, by its
+// predefined macros: what a reference and a slice's data take in the
+// program's layouts (CodeGen::ptrsize). Asked once per toolchain and kept in
+// GOOSE_HOME/build/toolchain/<toolchain id>/. `echo` prints the command, as
+// -v and --dry-run print the build's; a dry run runs nothing, and lays the
+// C out for 8 where nothing is kept yet.
+inline int64_t TargetPointerSize(const Toolchain &tc, FILE *echo, bool dryrun) {
+    auto dir = cat(GooseHome(), "/build/toolchain/", tc.id);
+    auto kept = cat(dir, "/pointer-size");
+    string text;
+    if (LoadFile(kept, text) && (text == "4" || text == "8")) return text[0] - '0';
+    auto probe = cat(dir, "/pointer-size.c");
+    auto argv = tc.style == "msvc" ? vector<string> { tc.cc, "/nologo", "/EP", probe }
+                                   : vector<string> { tc.cc, "-E", "-P", probe };
+    if (echo) fprintf(echo, "%s\n", CommandLineText(argv).c_str());
+    if (dryrun) return 8;
+    std::error_code ec;
+    filesystem::create_directories(filesystem::path(dir), ec);
+    if (ec) throw CompileError { cat("cannot create ", dir, ": ", ec.message()) };
+    FileLock lock(cat(dir, "/probe.lock"), "waiting for another goose asking the C compiler");
+    if (LoadFile(kept, text) && (text == "4" || text == "8")) return text[0] - '0';
+    if (!WriteFileMakingDirs(probe, "#if defined(__SIZEOF_POINTER__)\n"
+                                    "gs_pointer_size __SIZEOF_POINTER__\n"
+                                    "#elif defined(_WIN64)\n"
+                                    "gs_pointer_size 8\n"
+                                    "#elif defined(_WIN32)\n"
+                                    "gs_pointer_size 4\n"
+                                    "#endif\n"))
+        throw CompileError { cat("cannot write ", probe) };
+    auto r = RunProcess(argv);
+    auto at = r.output.find("gs_pointer_size ");
+    auto digit = at == string::npos || at + 16 >= r.output.size() ? 0 : r.output[at + 16];
+    if (!r.started || r.code || (digit != '4' && digit != '8'))
+        throw CompileError { cat("cannot tell the pointer size of the C compiler ", tc.cc,
+                                 "; --pointer-size 4 or 8 says it. What it printed for\n    ",
+                                 CommandLineText(argv), "\n", r.output) };
+    WriteFileMakingDirs(kept, string(1, digit));
+    return digit - '0';
+}
+
 // What `goose build` does once the compiler has written the program's C to
 // `cfile` in `builddir`: finds the runtime object for the toolchain `tc`,
 // which built the native parts whose response files are `nativersps`

@@ -85,8 +85,16 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB and
+   a Windows one 2 GB, and the defaults there leave room for a few dozen
+   regions and the rest of the program. */
 #ifndef GS_STACK_RESERVE
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
+#else
+#define GS_STACK_RESERVE_32 (64ull << 20)
+#define GS_STACK_RESERVE GS_STACK_RESERVE_32
+#endif
 #endif
 #ifndef GS_STACK_GAP
 #define GS_STACK_GAP (1ull << 20)   /* Unmapped tail so runaway growth aborts. */
@@ -97,7 +105,15 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
    worker's. Not enforced at reservation; what the platform refuses is
    retried smaller (gs_reserve_region). */
 #ifndef GS_STACK_BUDGET
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#elif !defined(_WIN32)
+#define GS_STACK_BUDGET_32 (2048ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#else
+#define GS_STACK_BUDGET_32_WINDOWS (1024ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32_WINDOWS
+#endif
 #endif
 #ifndef GS_STACK_STATS
 #define GS_STACK_STATS 0    /* 1: each thread program reports its stack use as it ends. */
@@ -107,6 +123,9 @@ R"GSRT(/* Goose runtime — the part every compiler-generated C file starts with
    guard region enforces it, so no growth path needs its own check. */
 #if GS_STACK_RESERVE > (1ull << 48)
 #error "GS_STACK_RESERVE exceeds the 2^48 limit (goose_spec.md 10.4)"
+#endif
+#if UINTPTR_MAX <= 0xFFFFFFFFu && GS_STACK_RESERVE + GS_STACK_GAP > (3ull << 30)
+#error "GS_STACK_RESERVE and GS_STACK_GAP exceed a 32-bit address space"
 #endif
 
 #ifdef _MSC_VER
@@ -174,11 +193,13 @@ enum {
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
     GS_E_POPN,         /* pop_n of a negative count or more than the length */
     GS_E_QBOUND,       /* a queue limit of zero or less */
+    GS_E_RESIZELEN,    /* resize past a data stack's reservation (32-bit targets) */
 };
 
 GS_API GS_NORETURN void gs_panic(const char *msg);
 GS_API GS_NORETURN void gs_abort(int err, const char *file, int line);
-/* The program's own abort(msg) (§9.3): the message is Goose bytes, not a C
+)GSRT"
+R"GSRT(/* The program's own abort(msg) (§9.3): the message is Goose bytes, not a C
    string, so it goes out with an explicit length. */
 GS_API GS_NORETURN void gs_abort_msg(const uint8_t *msg, int64_t len, const char *file,
                                      int line);
@@ -190,8 +211,7 @@ GS_API GS_NORETURN void gs_divovf(const char *file, int line);
 GS_API GS_NORETURN void gs_ovf(int64_t a, const char *op, int64_t b, const char *type,
                                const char *file, int line);
 GS_API GS_NORETURN void gs_ovf_neg(int64_t a, const char *type, const char *file, int line);
-)GSRT"
-R"GSRT(GS_API GS_NORETURN void gs_asfail_i(const char *why, int64_t v, const char *type,
+GS_API GS_NORETURN void gs_asfail_i(const char *why, int64_t v, const char *type,
                                     const char *file, int line);
 GS_API GS_NORETURN void gs_asfail_u(const char *why, uint64_t v, const char *type,
                                     const char *file, int line);
@@ -335,7 +355,8 @@ static inline int gs_simd_level(void) {
 #define gs_ld32(p) GS_AT(const uint32_t, p, 0)
 #define gs_ld64(p) GS_AT(const uint64_t, p, 0)
 #else
-static uint32_t gs_ld32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
+)GSRT"
+R"GSRT(static uint32_t gs_ld32(const void *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static uint64_t gs_ld64(const void *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 #endif
 
@@ -350,8 +371,7 @@ static uint64_t gs_bytemask(int64_t k) {
    element), and C leaves all three undefined on a null pointer even for
    zero bytes. A copy of up to 16 bytes loads both overlapping halves before
    it stores them, and one of up to 256 bytes moves 16 at a time, the last 16
-)GSRT"
-R"GSRT(   overlapping, where the library's memcpy would take a call and a dispatch
+   overlapping, where the library's memcpy would take a call and a dispatch
    on the length; as the C library's memcpy, it takes runs that do not
    overlap. */
 static void gs_memcpy(void *dst, const void *src, size_t n) {
@@ -502,7 +522,8 @@ static T gs_add_##SFX(T a, T b, const char *file, int line) { \
     return (T)r; } \
 static T gs_sub_##SFX(T a, T b, const char *file, int line) { \
     int64_t r = (int64_t)a - (int64_t)b; \
-    if (r < MIN || r > MAX) gs_ovf(a, "-", b, #SFX, file, line); \
+)GSRT"
+R"GSRT(    if (r < MIN || r > MAX) gs_ovf(a, "-", b, #SFX, file, line); \
     return (T)r; } \
 static T gs_mul_##SFX(T a, T b, const char *file, int line) { \
     int64_t r = (int64_t)a * (int64_t)b; \
@@ -520,8 +541,7 @@ static T gs_shr_##SFX(T a, int64_t n) { \
 /* Unsigned types wrap modulo 2^width by definition (§6.2) in every build:
    plain C unsigned arithmetic, truncated back to the width. */
 #define GS_INTOPS_U(SFX, T, MAX, BITS) \
-)GSRT"
-R"GSRT(static T gs_add_##SFX(T a, T b) { return (T)(a + b); } \
+static T gs_add_##SFX(T a, T b) { return (T)(a + b); } \
 static T gs_sub_##SFX(T a, T b) { return (T)(a - b); } \
 static T gs_mul_##SFX(T a, T b) { return (T)((uint64_t)a * (uint64_t)b); } \
 static T gs_shl_##SFX(T a, int64_t n) { \
@@ -681,7 +701,8 @@ static uint64_t gs_divu_gen(uint64_t d, uint8_t *more) {
     } else {
         uint64_t twice = rem + rem;
         m += m;
-        if (twice >= d || twice < rem) m++;
+)GSRT"
+R"GSRT(        if (twice >= d || twice < rem) m++;
         *more = (uint8_t)(k | GS_DIVU_ADD);
     }
     return m + 1;
@@ -709,8 +730,7 @@ static uint64_t gs_divu_q(uint64_t x, uint64_t magic, uint8_t more) {
    magic: x / d is the high half of a 32x32 product, which a C compiler
    vectorizes where it keeps the 64x64 one scalar, and which needs no
    128-bit arithmetic, so only a zero divisor gets GS_DIVU_NONE. */
-)GSRT"
-R"GSRT(static uint32_t gs_divu32_gen(uint32_t d, uint8_t *more) {
+static uint32_t gs_divu32_gen(uint32_t d, uint8_t *more) {
     int k = 31;
     uint64_t n;
     uint32_t m, rem;
@@ -865,7 +885,8 @@ GS_API void gs_free_msg(uint8_t *msg);
 typedef struct gs_qnode {
     struct gs_qnode *next;
     int64_t size;
-    /* Value bytes follow the header. */
+)GSRT"
+R"GSRT(    /* Value bytes follow the header. */
 } gs_qnode;
 
 typedef struct gs_qstate *gs_queue;
@@ -888,8 +909,7 @@ static GS_TLS int64_t gs_nstks;
 
 /* The current program instance's globals (goose_spec.md 11.1), a struct the
    compiler lays out: main's is its one static instance, a worker's a fresh
-)GSRT"
-R"GSRT(   copy of the globals its program uses, taken from the spawning instance
+   copy of the globals its program uses, taken from the spawning instance
    at spawn like the arguments (11.2). No global is shared between program
    instances; the only C statics a program shares are read-only ones. */
 static GS_TLS void *gs_gl;
@@ -1075,7 +1095,8 @@ static int64_t gs_uleb_check(const uint8_t *p, const uint8_t *end, uint64_t *out
 /* The same for a signed (zigzag) varint: a value field or a self-relative
    offset of varint width (3.6). */
 static int64_t gs_zig_check(const uint8_t *p, const uint8_t *end, int64_t *out) {
-    uint64_t u = 0;
+)GSRT"
+R"GSRT(    uint64_t u = 0;
     int64_t k = gs_uleb_check(p, end, &u);
     if (k) *out = (int64_t)((u >> 1) ^ (0u - (u & 1)));
     return k;
@@ -1092,8 +1113,7 @@ static int64_t gs_zig_check(const uint8_t *p, const uint8_t *end, int64_t *out) 
 #define GS_BM_MAX ((int64_t)(GS_STACK_RESERVE))
 
 /* An image is little-endian by definition (serialization.md 7), which every
-)GSRT"
-R"GSRT(   target this compiles for is. The test is a constant to any optimizer; it is
+   target this compiles for is. The test is a constant to any optimizer; it is
    here so that a big-endian host fails loudly instead of writing bytes that
    only it can read back. */
 static int gs_is_le(void) {
@@ -1158,6 +1178,7 @@ static const char *gs_errmsgs[] = {
     "non-null relative reference encodes as null",
     "pop_n count negative or beyond the array's length",
     "queue limit of zero or less",
+    "resize to more than a data stack holds",
 };
 
 /* Ends the process with `code`, its streams flushed: exit() and every
@@ -1326,10 +1347,10 @@ static int64_t gs_thread_cap = INT64_MAX;
 
 /* A region's own sizes travel with it: those reserved before a refusal
    halved the size are larger than those after. */
-typedef struct {
-    uint8_t *base;
 )GSRT"
-R"GSRT(    size_t usable, size;    /* size: with the guard gap */
+R"GSRT(typedef struct {
+    uint8_t *base;
+    size_t usable, size;    /* size: with the guard gap */
 } gs_region;
 static GS_TLS gs_region *gs_regions;
 static GS_TLS volatile long gs_nregions;
@@ -1541,11 +1562,11 @@ static void gs_fault_handler(int sig, siginfo_t *info, void *ctx) {
     #if defined(__linux__) && defined(BUS_ADRALN)
         if (sig == SIGBUS && info->si_code == BUS_ADRALN) {
             sigaction(sig, &gs_prev_bus, NULL);
-            return;
+)GSRT"
+R"GSRT(            return;
         }
     #endif
-)GSRT"
-R"GSRT(    for (long i = 0; i < gs_nregions; i++) {
+    for (long i = 0; i < gs_nregions; i++) {
         const gs_region *r = &gs_regions[i];
         /* The usable part is mapped, so only a fault in the gap is growth. */
         uint8_t *gap = r->base + r->usable;

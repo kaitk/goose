@@ -73,8 +73,16 @@
 #ifndef GS_MAX_STACKS
 #define GS_MAX_STACKS 1024
 #endif
+/* A 32-bit program has at most 4 GB of address space, a Linux one 3 GB and
+   a Windows one 2 GB, and the defaults there leave room for a few dozen
+   regions and the rest of the program. */
 #ifndef GS_STACK_RESERVE
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_RESERVE (2048ull << 20)  /* Address space reserved per stack. */
+#else
+#define GS_STACK_RESERVE_32 (64ull << 20)
+#define GS_STACK_RESERVE GS_STACK_RESERVE_32
+#endif
 #endif
 #ifndef GS_STACK_GAP
 #define GS_STACK_GAP (1ull << 20)   /* Unmapped tail so runaway growth aborts. */
@@ -85,7 +93,15 @@
    worker's. Not enforced at reservation; what the platform refuses is
    retried smaller (gs_reserve_region). */
 #ifndef GS_STACK_BUDGET
+#if UINTPTR_MAX > 0xFFFFFFFFu
 #define GS_STACK_BUDGET (32ull << 40)
+#elif !defined(_WIN32)
+#define GS_STACK_BUDGET_32 (2048ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32
+#else
+#define GS_STACK_BUDGET_32_WINDOWS (1024ull << 20)
+#define GS_STACK_BUDGET GS_STACK_BUDGET_32_WINDOWS
+#endif
 #endif
 #ifndef GS_STACK_STATS
 #define GS_STACK_STATS 0    /* 1: each thread program reports its stack use as it ends. */
@@ -95,6 +111,9 @@
    guard region enforces it, so no growth path needs its own check. */
 #if GS_STACK_RESERVE > (1ull << 48)
 #error "GS_STACK_RESERVE exceeds the 2^48 limit (goose_spec.md 10.4)"
+#endif
+#if UINTPTR_MAX <= 0xFFFFFFFFu && GS_STACK_RESERVE + GS_STACK_GAP > (3ull << 30)
+#error "GS_STACK_RESERVE and GS_STACK_GAP exceed a 32-bit address space"
 #endif
 
 #ifdef _MSC_VER
@@ -162,6 +181,7 @@ enum {
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
     GS_E_POPN,         /* pop_n of a negative count or more than the length */
     GS_E_QBOUND,       /* a queue limit of zero or less */
+    GS_E_RESIZELEN,    /* resize past a data stack's reservation (32-bit targets) */
 };
 
 GS_API GS_NORETURN void gs_panic(const char *msg);

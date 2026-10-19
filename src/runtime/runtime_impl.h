@@ -23,6 +23,7 @@ static const char *gs_errmsgs[] = {
     "non-null relative reference encodes as null",
     "pop_n count negative or beyond the array's length",
     "queue limit of zero or less",
+    "resize to more than a data stack holds",
 };
 
 /* Ends the process with `code`, its streams flushed: exit() and every
