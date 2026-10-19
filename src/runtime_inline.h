@@ -2071,13 +2071,22 @@ GS_API int64_t gs_spans_regrow(uint8_t *base, int64_t *n, uint8_t **top, int64_t
    positions, every search, tests one byte at a time, a single byte by
    memchr. No load reaches past the range: its last part is tested as the
    range's last whole block, with the positions before it, already tested,
-   shifted out of the result. */
+   shifted out of the result.
 
+   The set is a ByteSet the program wrote, read here as a gs_byteset: may_alias
+   keeps gcc's type-based alias analysis from taking those for two objects,
+   which at -O2 had it drop the program's stores to a set it then searched. */
+
+#if (defined(__GNUC__) || defined(__clang__)) && !defined(__TINYC__)
+#define GS_MAY_ALIAS __attribute__((may_alias))
+#else
+#define GS_MAY_ALIAS
+#endif
 #pragma pack(push, 1)
 typedef struct {
     uint8_t members[256];
     uint8_t kind, invert, bytes[3], lo[16], hi[16];
-} gs_byteset;
+} GS_MAY_ALIAS gs_byteset;
 #pragma pack(pop)
 
 static int64_t gs_scan_any_bytes(const uint8_t *p, int64_t n, const gs_byteset *s) {
@@ -2180,15 +2189,15 @@ static GS_SSSE3 GS_INLINE __m128i gs_bsm_tables(const gs_bsm *m, __m128i x) {
     return _mm_cmpeq_epi8(_mm_and_si128(_mm_or_si128(lo, hi), bit), bit);
 }
 
-#define GS_LOAD(q) _mm_loadu_si128((const __m128i *)(q))
+)GSRT"
+R"GSRT(#define GS_LOAD(q) _mm_loadu_si128((const __m128i *)(q))
 
 /* The block loop of a search over n >= 16 positions for the bytes TEST
    finds in a block. */
 #define GS_ANY_LOOP(TEST)                                                              \
     int64_t i = 0;                                                                     \
     unsigned k;                                                                        \
-)GSRT"
-R"GSRT(    for (; i + 16 <= n; i += 16) {                                                     \
+    for (; i + 16 <= n; i += 16) {                                                     \
         k = (unsigned)_mm_movemask_epi8(TEST(GS_LOAD(p + i)));                         \
         if (k) return i + gs_ctz32(k);                                                 \
     }                                                                                  \
@@ -2351,7 +2360,8 @@ static const char gs_digit_pairs[201] =
 
 static int gs_fmt_digits(uint64_t v) {
     int n = 1;
-    for (;;) {
+)GSRT"
+R"GSRT(    for (;;) {
         if (v < 10) return n;
         if (v < 100) return n + 1;
         if (v < 1000) return n + 2;
@@ -2368,8 +2378,7 @@ GS_API int64_t gs_fmt_u64(uint8_t *dst, uint64_t v) {
         unsigned r = (unsigned)(v % 100);
         v /= 100;
         p -= 2;
-)GSRT"
-R"GSRT(        p[0] = (uint8_t)gs_digit_pairs[2 * r];
+        p[0] = (uint8_t)gs_digit_pairs[2 * r];
         p[1] = (uint8_t)gs_digit_pairs[2 * r + 1];
     }
     if (v >= 10) {
@@ -2576,7 +2585,8 @@ static int64_t gs_fmt_float(uint8_t *dst, int neg, uint64_t frac, int bexp, int 
 GS_API int64_t gs_fmt_f64(uint8_t *dst, double v) {
     uint64_t b;
     /* C libraries disagree here (msvcrt, which tcc uses on Windows, writes
-       1.#INF and -1.#IND; others give a NaN's sign bit, which depends on
+)GSRT"
+R"GSRT(       1.#INF and -1.#IND; others give a NaN's sign bit, which depends on
        the CPU that made it), so these are spelled by the runtime. */
     if (v != v) { memcpy(dst, "nan", 3); return 3; }
     if (isinf(v)) {
@@ -2585,8 +2595,7 @@ GS_API int64_t gs_fmt_f64(uint8_t *dst, double v) {
         return 4;
     }
     memcpy(&b, &v, sizeof b);
-)GSRT"
-R"GSRT(    return gs_fmt_float(dst, (int)(b >> 63), b & (((uint64_t)1 << 52) - 1),
+    return gs_fmt_float(dst, (int)(b >> 63), b & (((uint64_t)1 << 52) - 1),
                         (int)(b >> 52) & 0x7FF, 53, -1074);
 }
 
