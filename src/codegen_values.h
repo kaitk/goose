@@ -32,7 +32,7 @@ inline CodeGen::Loc CodeGen::FatRefLoc(const string &x, TypeExpr *sub) {
     lv.stk = cat(x, ".stk");
     if (IsFrameObj(sub)) {
         lv.val = true;
-        lv.s = cat("(*(", CT(sub), " *)", x, ".hdr)");
+        lv.s = cat("(*(", PT(sub), " *)", x, ".hdr)");
         lv.hdr = lv.s;
     } else {
         lv.s = cat(x, ".hdr->base");
@@ -52,7 +52,7 @@ inline CodeGen::Loc CodeGen::BytesLoc(const string &ptr, TypeExpr *t, const Loc 
     l.viaref = from.viaref || t->kind == TY_REF;
     if (IsFix(t)) {
         l.val = true;
-        l.s = cat("(*(", CT(t), " *)(", ptr, "))");
+        l.s = cat("(*(", PT(t), " *)(", ptr, "))");
     } else {
         l.val = false;
         l.s = ptr;
@@ -75,7 +75,7 @@ inline void CodeGen::RelParts(const Loc &lv, string &faddr, string &off) {
         off = cat("(int64_t)(", RelCT(lv.t), ")", lv.s);
     } else {
         faddr = lv.s;
-        off = cat("(int64_t)*(", RelCT(lv.t), " *)(", lv.s, ")");
+        off = cat("(int64_t)*(", RelPT(lv.t), " *)(", lv.s, ")");
     }
 }
 
@@ -171,7 +171,7 @@ inline void CodeGen::DerefLoc(Loc &lv) {
 inline void CodeGen::PinLoc(Loc &lv) {
     if (lv.val) {
         auto p = T();
-        L(CT(lv.t), " *", p, " = &(", lv.s, ");");
+        L(PT(lv.t), " *", p, " = &(", lv.s, ");");
         lv.s = cat("(*", p, ")");
     } else if (!IsResz(lv.t)) {
         auto p = T();
@@ -367,8 +367,8 @@ inline CodeGen::ArrView CodeGen::RawArrayView(const Loc &lv) {
                 v.typedelems = true;
             } else {
                 v.elems = cat("((", lv.s, ") + 8)");
-                v.len = cat("(int64_t)*(uint32_t *)((", lv.s, ") + 4)");
-                v.lenlv = cat("(*(uint32_t *)((", lv.s, ") + 4))");
+                v.len = cat("(int64_t)*(gs_ua_uint32_t *)((", lv.s, ") + 4)");
+                v.lenlv = cat("(*(gs_ua_uint32_t *)((", lv.s, ") + 4))");
             }
             return v;
         case A_VAR: {
@@ -383,7 +383,7 @@ inline CodeGen::ArrView CodeGen::RawArrayView(const Loc &lv) {
                 v.len = cat("GS_ULEB_READ(", lv.s, ")");
             } else {
                 v.elems = cat("((", lv.s, ") + ", IntSize(ls), ")");
-                v.len = cat("(int64_t)*(", IntCT(ls), " *)(", lv.s, ")");
+                v.len = cat("(int64_t)*(", IntPT(ls), " *)(", lv.s, ")");
             }
             return v;
         }
@@ -492,7 +492,7 @@ inline void CodeGen::FixedLocal(TypeExpr *t, string &name, const string &init, b
         return;
     }
     auto stk = AllocStk(forlocal);
-    L(CT(t), " *", name, " = (", CT(t), " *)", Top(stk), ";");
+    L(PT(t), " *", name, " = (", PT(t), " *)", Top(stk), ";");
     SaveBase(forlocal, stk, cat("(uint8_t *)", name));
     Bump(stk, cat("sizeof(", CT(t), ")"));
     name = cat("(*", name, ")");
@@ -588,7 +588,7 @@ inline CodeGen::Loc CodeGen::IndexLoc(Loc lv, Node *idxnode, Line ln, bool nobc)
         // into a scalar pointer avoids that aggregate-alias miscompilation;
         // native optimizers still hoist it when the slice is loop-invariant.
         auto p = T();
-        L(IsBytesT(v.elem) ? "uint8_t" : CT(v.elem), " *", p, " = ", v.elems, ";");
+        L(IsBytesT(v.elem) ? "uint8_t" : PT(v.elem), " *", p, " = ", v.elems, ";");
         v.elems = p;
     }
     string ix;
@@ -616,7 +616,7 @@ inline CodeGen::Loc CodeGen::IndexLoc(Loc lv, Node *idxnode, Line ln, bool nobc)
     auto esz = FixedSize(v.elem);
     if ((v.elem->kind == TY_INT || v.elem->kind == TY_FLT) && (esz == 2 || esz == 4 || esz == 8)) {
         auto r = BytesLoc(v.elems, v.elem, lv);
-        r.s = cat("(((", CT(v.elem), " *)(", v.elems, "))[", ix, "])");
+        r.s = cat("(((", PT(v.elem), " *)(", v.elems, "))[", ix, "])");
         return r;
     }
     return BytesLoc(cat("(", v.elems, " + ", ix, " * ", esz, ")"), v.elem, lv);
@@ -916,7 +916,7 @@ inline string CodeGen::LoadLoc(Loc lv, TypeExpr *et, Line ln) {
         // are at most variable-class (§3.3).
         assert(!IsResz(r.sub));
         if (IsBytesT(r.sub)) return p;
-        return cat("((", CT(r.sub), " *)", p, ")");
+        return cat("((", PT(r.sub), " *)", p, ")");
     }
     if (et && et->kind == TY_SLICE && lv.t->kind == TY_ARRAY) {
         // A whole array at a slice destination (§3.10), any loc form
@@ -926,7 +926,7 @@ inline string CodeGen::LoadLoc(Loc lv, TypeExpr *et, Line ln) {
         auto dp = v.typedelems && IsBytesT(et->sub)
                       ? cat("(uint8_t *)(", v.elems, ")") : string(v.elems);
         if (!v.typedelems && !IsBytesT(et->sub))
-            dp = cat("(", CT(et->sub), " *)(", v.elems, ")");
+            dp = cat("(", PT(et->sub), " *)(", v.elems, ")");
         L(CT(et), " ", t, " = { ", dp, ", ", v.len, " };");
         return t;
     }
@@ -974,7 +974,7 @@ inline string CodeGen::AdaptToFixed(Loc lv, TypeExpr *et, Line ln) {
         auto ts = TagSize(ei->en);
         auto tv = T();
         FixedLocal(et, tv);
-        L(tv, ".tag = *(", IntCT(TagStore(ei->en)), " *)(", lv.s, ")", ";");
+        L(tv, ".tag = *(", IntPT(TagStore(ei->en)), " *)(", lv.s, ")", ";");
         L("switch (", tv, ".tag) {");
         for (size_t vi = 0; vi < ei->en->variants.size(); vi++) {
             auto psz = VariantLayout(ei, (int)vi).size;
@@ -1629,8 +1629,8 @@ inline string CodeGen::GenRangeEq(TypeExpr *elem, const string &ae, const string
         L(t, " = gs_memeq(", ae, ", ", be, ", (size_t)((", an, ") * ", FixedSize(elem), "));");
     } else if (IsFix(elem)) {
         auto pa = T(), pb = T(), iv = T();
-        L("const ", CT(elem), " *", pa, " = (const ", CT(elem), " *)(", ae, ");");
-        L("const ", CT(elem), " *", pb, " = (const ", CT(elem), " *)(", be, ");");
+        L("const ", PT(elem), " *", pa, " = (const ", PT(elem), " *)(", ae, ");");
+        L("const ", PT(elem), " *", pb, " = (const ", PT(elem), " *)(", be, ");");
         L("for (int64_t ", iv, " = 0; ", t, " && ", iv, " < (", an, "); ", iv, "++)");
         L("    ", t, " = ", EqX(elem, cat(pa, "[", iv, "]"), cat(pb, "[", iv, "]")),
           ";");
@@ -1794,7 +1794,7 @@ inline string CodeGen::GenSlice(SliceExpr *se, const string &into) {
     string data, len;
     if (IsFix(v.elem)) {
         auto dp = v.typedelems ? v.elems
-                               : cat("(", CT(v.elem), " *)(", v.elems, ")");
+                               : cat("(", PT(v.elem), " *)(", v.elems, ")");
         data = cat(dp, " + ", lov);
         len = cat(hiv, " - ", lov);
     } else {

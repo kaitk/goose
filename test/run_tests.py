@@ -1887,6 +1887,17 @@ def main():
         r.section("extern types")
         r.show_task(extern_types)
 
+    def export_header():
+        from export_header import check_export_header
+        try:
+            check_export_header(exe, cc, gendir, runtime=r.runtime, extra=extra)
+            r.ok("export header: a C host builds against --header's header")
+        except RuntimeError as e:
+            r.fail("export header", str(e))
+    if cc:
+        r.section("export header")
+        r.show_task(export_header)
+
     def resource_paths():
         from resource_paths import check_resource_paths
         try:
