@@ -951,7 +951,7 @@ inline void CodeGen::EmitExports() {
         }
         for (auto &a : argv) Append(args, args.empty() ? "" : ", ", a);
         auto outlen = Unique("gs_export_len");
-        if (returnslice) Append(params, params.empty() ? "" : ", ", "int64_t *", outlen);
+        if (returnslice) Append(params, params.empty() ? "" : ", ", "gs_ua_int64_t *", outlen);
         if (params.empty()) params = "void";
         if (!args.empty() && si.needssp) args += ", ";
         if (si.needssp) args += "0";
@@ -979,9 +979,9 @@ inline void CodeGen::EmitExports() {
 }
 
 inline string CodeGen::ExportHeader() {
-    string header = "#pragma once\n#include <stdint.h>\n"
-                    "typedef struct gs_stack gs_stack;\n"
-                    "#pragma pack(push, 1)\n";
+    string header = cat("#pragma once\n#include <stdint.h>\n", UnalignedDecls(),
+                        "typedef struct gs_stack gs_stack;\n"
+                        "#pragma pack(push, 1)\n");
     header += tdecls;
     header += "#pragma pack(pop)\n\n";
     header += "#ifdef __cplusplus\nextern \"C\" {\n#endif\n"

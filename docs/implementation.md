@@ -3819,14 +3819,31 @@ the representations and their implementation.
 
 ### 6.1 Values
 
-The C backend targets 64-bit, little-endian hosts with unaligned packed
-accesses. Integer and floating widths are their declared widths; `bool`
+The C backend targets little-endian hosts with 8- or 4-byte pointers.
+Integer and floating widths are their declared widths; `bool`
 occupies one byte and valid values encode as 0 or 1. Array metadata is
 counted in elements, except the outer serialization frame, which counts
 payload bytes (section 6.9). A stored length must represent the actual
 count exactly; truncating it would change where subsequent fields start.
 Known counts are checked statically; dynamic counts are checked before
 storing or patching the length field.
+
+Layouts take the C compiler's pointer size (`CodeGen::ptrsize`): a
+reference is one pointer, a slice a pointer and an `int64` length, and a fat
+reference two pointers. `goose build` asks the C compiler for the size once
+per toolchain (`TargetPointerSize`); C written with `-o` takes this
+machine's, or `--pointer-size`'s. The C fails to compile under any other
+size (`gs_built_for_N_byte_pointers`). A 32-bit target also reserves less per
+data stack by default (`GS_STACK_RESERVE_32`, `GS_STACK_BUDGET_32`, and
+`GS_STACK_BUDGET_32_WINDOWS` in a Windows program's 2 GB).
+
+Values are packed, so a pointer to a scalar may be misaligned. Codegen spells
+one with the scalar's `gs_ua_` type (`CodeGen::PT`), which the C and an
+`--header` header declare (`UnalignedDecls`) at alignment 1 on targets other
+than x86 and arm64, since 32-bit ARM's `ldrd`, `strd` and `vldr` fault on a
+misaligned address. On x86 and arm64 the `gs_ua_` names are macros for the
+plain types, so the C is the same as without them: even an equal typedef
+changes what gcc -O2 makes of some accesses.
 
 Layout details needed for byte/C compatibility (`FixedSize`, `LayoutFields`,
 `LenStore`, `TagStore`):

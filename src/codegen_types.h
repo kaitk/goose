@@ -239,6 +239,27 @@ inline const char *CodeGen::RelCT(TypeExpr *rt) {
     return RelCT((IntStorage)rt->ref->lenstorage, rt->ref->pool != nullptr);
 }
 
+// The gs_ua_ types, which a pointer to a scalar points at (PT), for the
+// program's C and an --header header alike. Values are packed (spec C.2), so
+// such a pointer may be misaligned. x86 and arm64 load and store misaligned at
+// full speed, and there each is a macro for the plain type, so the C is what it
+// would be without them: a typedef, even an equal one, changes what gcc -O2
+// makes of some accesses. Elsewhere each is a typedef at alignment 1, since
+// 32-bit ARM, for one, faults on a misaligned ldrd, strd or vldr.
+inline string CodeGen::UnalignedDecls() {
+    static const char *const cts[] = { "int8_t",  "uint8_t",  "int16_t", "uint16_t", "int32_t",
+                                       "uint32_t", "int64_t", "uint64_t", "float",    "double" };
+    string typedefs, macros;
+    for (auto ct : cts) {
+        Append(typedefs, "typedef ", ct, " gs_ua_", ct, " __attribute__((aligned(1)));\n");
+        Append(macros, "#define gs_ua_", ct, " ", ct, "\n");
+    }
+    return cat("#ifndef GS_UA_DECLARED\n#define GS_UA_DECLARED\n"
+               "#if (defined(__GNUC__) || defined(__clang__)) && !defined(__TINYC__) && \\\n"
+               "    !defined(__x86_64__) && !defined(__i386__) && !defined(__aarch64__)\n",
+               typedefs, "#else\n", macros, "#endif\n#endif\n");
+}
+
 // StructInst / (EnumInst, variant).
 
 // The alignment `pad` (bare form) gives the next field: its scalar width.
@@ -455,6 +476,14 @@ inline void CodeGen::EmitCoreTypes() {
     used.insert("gs_pref");
 }
 
+// What a pointer to a value of type `t` points at: CT, but a scalar's
+// gs_ua_ type (UnalignedDecls).
+inline string CodeGen::PT(TypeExpr *t) {
+    auto scalar = t->kind == TY_INT || t->kind == TY_FLT || t->kind == TY_BOOL ||
+                  (t->kind == TY_REF && t->ref->lenstorage >= 0);
+    return scalar ? cat("gs_ua_", CT(t)) : CT(t);
+}
+
 // The C type of a fixed-class value (also refs/slices to anything). Emits
 // the typedef on first use. Never valid for bytes-class values.
 inline string CodeGen::CT(TypeExpr *t) {
@@ -474,7 +503,7 @@ inline string CodeGen::CT(TypeExpr *t) {
             if (IsBytesT(r.sub)) return "uint8_t *";
             // A pointer needs only the pointee's name, so a node type can
             // hold references to itself and the body can come later.
-            return cat(StructLike(r.sub) ? NameCT(r.sub) : CT(r.sub), " *");
+            return cat(StructLike(r.sub) ? NameCT(r.sub) : PT(r.sub), " *");
         }
         default: break;
     }
@@ -503,7 +532,7 @@ inline string CodeGen::CT(TypeExpr *t) {
                 CT(t->sub);
                 return name;
             }
-            auto e = IsBytesT(t->sub) ? string("uint8_t") : CT(t->sub);
+            auto e = IsBytesT(t->sub) ? string("uint8_t") : PT(t->sub);
             Append(d, "typedef struct { ", e, " *data; int64_t len; } ", name, ";\n");
             slicects.insert(name);
             break;
@@ -691,14 +720,14 @@ inline void CodeGen::EmitSizeWalk(string &b, TypeExpr *t, const string &q) {
                         Append(b, "    { int64_t n = GS_ULEB_READ(", q, "); ", q,
                                " += GS_ULEB_SIZE(", q, ");\n");
                     else
-                        Append(b, "    { int64_t n = (int64_t)*(", IntCT(ls), " *)", q,
+                        Append(b, "    { int64_t n = (int64_t)*(", IntPT(ls), " *)", q,
                                "; ", q, " += ", IntSize(ls), ";\n");
                     EmitSizeElems(b, a.sub, q);
                     Append(b, "    }\n");
                     return;
                 }
                 case A_LIMITED:   // Runtime capacity: [cap u32][len u32][cap slots].
-                    Append(b, "    ", q, " += 8 + (int64_t)*(uint32_t *)", q, " * ",
+                    Append(b, "    ", q, " += 8 + (int64_t)*(gs_ua_uint32_t *)", q, " * ",
                            FixedSize(a.sub), ";\n");
                     return;
                 default:
@@ -724,7 +753,7 @@ inline void CodeGen::EmitSizeWalk(string &b, TypeExpr *t, const string &q) {
         case TY_ENUM: {
             auto ei = EIOf(t);
             auto ts = TagSize(ei->en);
-            Append(b, "    switch (*(", IntCT(TagStore(ei->en)), " *)", q, ") {\n");
+            Append(b, "    switch (*(", IntPT(TagStore(ei->en)), " *)", q, ") {\n");
             for (size_t vi = 0; vi < ei->en->variants.size(); vi++) {
                 Append(b, "    case ", vi, ": { ", q, " += ", ts, ";\n");
                 string inner;
@@ -922,7 +951,7 @@ inline void CodeGen::EmitVerifyLink(string &b, TypeExpr *rt, TypeExpr *elem, con
         Append(b, "        if (!GS_BM_GET(bm, ", v,
                ")) return -1;\n");
     if (variant)
-        Append(b, "        if (n - ", v, " < ", skip, " || *(const ", IntCT(ts), " *)(p + ",
+        Append(b, "        if (n - ", v, " < ", skip, " || *(const ", IntPT(ts), " *)(p + ",
                v, ") != ", vi, ") return -1;\n");
     Append(b, "    }\n");
 }
@@ -1045,7 +1074,7 @@ inline void CodeGen::EmitVerifyWalk(string &b, TypeExpr *t, TypeExpr *elem, cons
                                "k;\n");
                     } else {
                         Append(b, "        if (n - ", q, " < ", IntSize(ls), ") return -1;\n");
-                        Append(b, "        ", v, "n = (int64_t)*(const ", IntCT(ls), " *)(p + ",
+                        Append(b, "        ", v, "n = (int64_t)*(const ", IntPT(ls), " *)(p + ",
                                q, "); ", q, " += ", IntSize(ls), ";\n");
                     }
                     Append(b, "        if (", v, "n < 0 || ", v, "n > (n - ", q, ") / ",
@@ -1074,7 +1103,7 @@ inline void CodeGen::EmitVerifyWalk(string &b, TypeExpr *t, TypeExpr *elem, cons
                     if (stat) {
                         auto ls = LenStore(t->arr);
                         Append(b, "        if (n - ", q, " < ", FixedSize(t), ") return -1;\n");
-                        Append(b, "        ", v, "n = (int64_t)*(const ", IntCT(ls), " *)(p + ",
+                        Append(b, "        ", v, "n = (int64_t)*(const ", IntPT(ls), " *)(p + ",
                                q, ");\n");
                         Append(b, "        if (", v, "n < 0 || ", v, "n > ", ArrSize(t->arr),
                                ") return -1;\n");
@@ -1082,9 +1111,9 @@ inline void CodeGen::EmitVerifyWalk(string &b, TypeExpr *t, TypeExpr *elem, cons
                     } else {
                         Append(b, "        int64_t ", v, "c;\n");
                         Append(b, "        if (n - ", q, " < 8) return -1;\n");
-                        Append(b, "        ", v, "c = (int64_t)*(const uint32_t *)(p + ", q,
+                        Append(b, "        ", v, "c = (int64_t)*(const gs_ua_uint32_t *)(p + ", q,
                                ");\n");
-                        Append(b, "        ", v, "n = (int64_t)*(const uint32_t *)(p + ", q,
+                        Append(b, "        ", v, "n = (int64_t)*(const gs_ua_uint32_t *)(p + ", q,
                                " + 4);\n");
                         Append(b, "        if (", v, "n > ", v, "c || ", v, "c > (n - ", q,
                                " - 8) / ", esz, ") return -1;\n");
@@ -1138,7 +1167,7 @@ inline void CodeGen::EmitVerifyWalk(string &b, TypeExpr *t, TypeExpr *elem, cons
             Append(b, "        int64_t ", v, "t;\n");
             Append(b, "        if (n - ", q, " < ", fix ? FixedSize(t) : IntSize(ts),
                    ") return -1;\n");
-            Append(b, "        ", v, "t = (int64_t)*(const ", IntCT(ts), " *)(p + ", q, ");\n");
+            Append(b, "        ", v, "t = (int64_t)*(const ", IntPT(ts), " *)(p + ", q, ");\n");
             Append(b, "        if ((uint64_t)", v, "t >= ", nv, "u) return -1;\n");
             Append(b, "        ", q, " += ", IntSize(ts), ";\n");
             Append(b, "        switch (", v, "t) {\n");
@@ -1417,8 +1446,8 @@ inline void CodeGen::EmitEqWalk(string &bo, TypeExpr *t, const string &pa, const
             Append(bo, I, "if (memcmp(", pa, ", ", pb, ", ", FixedSize(t),
                    ") != 0) return 0;\n");
         } else {
-            Append(bo, I, "if (!", EqX(t, cat("(*(", CT(t), " *)", pa, ")"),
-                                       cat("(*(", CT(t), " *)", pb, ")")), ") return 0;\n");
+            Append(bo, I, "if (!", EqX(t, cat("(*(", PT(t), " *)", pa, ")"),
+                                       cat("(*(", PT(t), " *)", pb, ")")), ") return 0;\n");
         }
         Append(bo, I, pa, " += ", FixedSize(t), "; ", pb, " += ", FixedSize(t), ";\n");
         return;
@@ -1441,15 +1470,15 @@ inline void CodeGen::EmitEqWalk(string &bo, TypeExpr *t, const string &pa, const
                         Append(bo, I, "int64_t ", out, " = GS_ULEB_READ(", p, "); ", p,
                                " += GS_ULEB_SIZE(", p, ");\n");
                     } else {
-                        Append(bo, I, "int64_t ", out, " = (int64_t)*(", IntCT(ls), " *)",
+                        Append(bo, I, "int64_t ", out, " = (int64_t)*(", IntPT(ls), " *)",
                                p, "; ", p, " += ", IntSize(ls), ";\n");
                     }
                 } else if (a.akind == A_LIMITED) {
-                    Append(bo, I, "int64_t ", out, "cap = (int64_t)*(uint32_t *)", p,
-                           "; int64_t ", out, " = (int64_t)*(uint32_t *)(", p, " + 4); ",
+                    Append(bo, I, "int64_t ", out, "cap = (int64_t)*(gs_ua_uint32_t *)", p,
+                           "; int64_t ", out, " = (int64_t)*(gs_ua_uint32_t *)(", p, " + 4); ",
                            p, " += 8;\n");
                 } else {
-                    Append(bo, I, "int64_t ", out, " = *(int64_t *)", p, "; ", p,
+                    Append(bo, I, "int64_t ", out, " = *(gs_ua_int64_t *)", p, "; ", p,
                            " += 8;\n");
                 }
             };
