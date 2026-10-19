@@ -1465,9 +1465,20 @@ static struct sigaction gs_prev_segv, gs_prev_bus;
 static void gs_fault_handler(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     uint8_t *hit = (uint8_t *)info->si_addr;
+    /* A misaligned access overflows nothing, wherever it points: 32-bit ARM
+       faults on some of them, and those take the default action. Linux
+       alone is believed: macOS reports a guard page's fault as BUS_ADRALN. */
+    #if defined(__linux__) && defined(BUS_ADRALN)
+        if (sig == SIGBUS && info->si_code == BUS_ADRALN) {
+            sigaction(sig, &gs_prev_bus, NULL);
+            return;
+        }
+    #endif
     for (long i = 0; i < gs_nregions; i++) {
         const gs_region *r = &gs_regions[i];
-        if ((uintptr_t)hit - (uintptr_t)r->base < r->size) {
+        /* The usable part is mapped, so only a fault in the gap is growth. */
+        uint8_t *gap = r->base + r->usable;
+        if ((uintptr_t)hit - (uintptr_t)gap < r->size - r->usable) {
             char msg[GS_OVERFLOW_TEXT];
             ssize_t w = write(2, msg, gs_overflow_text(msg, r));
             (void)w;
@@ -1510,7 +1521,8 @@ static size_t gs_sigstack_size(void) {
 }
 
 /* Run by each thread program's thread as it starts: an alternate stack for
-   the fault handler, unless the thread has one (ASan gives every thread its
+)GSRT"
+R"GSRT(   the fault handler, unless the thread has one (ASan gives every thread its
    own), and the bounds of the thread's stack. */
 static void gs_native_stack_init(void) {
     stack_t ss;
@@ -1523,8 +1535,7 @@ static void gs_native_stack_init(void) {
         else free(ss.ss_sp);
     }
     #if defined(__APPLE__)
-)GSRT"
-R"GSRT(        hi = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
+        hi = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
         lo = hi - pthread_get_stacksize_np(pthread_self());
     #elif defined(__linux__)
         pthread_attr_t attr;
@@ -1722,7 +1733,8 @@ static void gs_sp_fix(gs_sppath *p, int64_t from) {
         gs_spinner *in = GS_SPINNER(p, p->node[l]);
         int64_t c = p->node[l + 1], k = p->pos[l];
         int leaf = l + 1 == p->h;
-        int64_t key = gs_sp_key(p, c, leaf), max = gs_sp_max(p, c, leaf);
+)GSRT"
+R"GSRT(        int64_t key = gs_sp_key(p, c, leaf), max = gs_sp_max(p, c, leaf);
         if (in->key[k] == key && in->max[k] == max) return;
         in->key[k] = key;
         in->max[k] = max;
@@ -1736,8 +1748,7 @@ static int64_t gs_sp_find(gs_sppath *p, int64_t idx) {
     gs_spleaf *lf;
     p->h = GS_SPHEAD(p)->height;
     for (l = 0; l < p->h; l++) {
-)GSRT"
-R"GSRT(        gs_spinner *in = GS_SPINNER(p, i);
+        gs_spinner *in = GS_SPINNER(p, i);
         for (k = 1; k < in->n && in->key[k] <= idx; k++) {}
         p->node[l] = i;
         p->pos[l] = k - 1;
@@ -1957,7 +1968,8 @@ GS_API int64_t gs_spans_alloc(uint8_t *base, int64_t *n, uint8_t **top, int64_t 
 /* The spans around a run that starts at idx: the path to the leaf holding
    the last span that starts at or before idx (its position k there, or -1),
    and the span after that one, which follows it in its leaf or starts the
-   next leaf (nl and nk, reached by the path np), where there is one. */
+)GSRT"
+R"GSRT(   next leaf (nl and nk, reached by the path np), where there is one. */
 typedef struct {
     gs_spleaf *lf, *nl;
     int64_t k, nk;
@@ -1979,8 +1991,7 @@ static void gs_sp_near(gs_sppath *p, gs_sppath *q, int64_t idx, gs_spnear *s) {
     *q = *p;
     if (gs_sp_nextleaf(q)) {
         s->np = q;
-)GSRT"
-R"GSRT(        s->nl = GS_SPLEAF(q, q->node[q->h]);
+        s->nl = GS_SPLEAF(q, q->node[q->h]);
         s->nk = 0;
     }
 }
@@ -2180,7 +2191,8 @@ static GS_INLINE __m128i gs_bsm_test(const gs_bsm *m, int k, __m128i x) {
 }
 
 /* The same by the tables: pshufb looks up lo[x & 15] where x < 128 and
-   hi[x & 15] where not (it gives 0 for an index with its top bit set), and
+)GSRT"
+R"GSRT(   hi[x & 15] where not (it gives 0 for an index with its top bit set), and
    the bit for x's bits 4 to 6, which the entry has or not. */
 static GS_SSSE3 GS_INLINE __m128i gs_bsm_tables(const gs_bsm *m, __m128i x) {
     __m128i lo = _mm_shuffle_epi8(m->a, x);
@@ -2189,8 +2201,7 @@ static GS_SSSE3 GS_INLINE __m128i gs_bsm_tables(const gs_bsm *m, __m128i x) {
     return _mm_cmpeq_epi8(_mm_and_si128(_mm_or_si128(lo, hi), bit), bit);
 }
 
-)GSRT"
-R"GSRT(#define GS_LOAD(q) _mm_loadu_si128((const __m128i *)(q))
+#define GS_LOAD(q) _mm_loadu_si128((const __m128i *)(q))
 
 /* The block loop of a search over n >= 16 positions for the bytes TEST
    finds in a block. */
@@ -2349,7 +2360,8 @@ GS_API void gs_rt_start(int argc, char **argv, uint64_t reserve, uint64_t gap,
 /* ---------------------------------------------------------------------------
    Text forms (§3.7). */
 
-/* Integers are written by a digit loop rather than printf, whose locale
+)GSRT"
+R"GSRT(/* Integers are written by a digit loop rather than printf, whose locale
    handling and format parsing cost several times the conversion itself:
    the digit count first, then the digits from the right, two per division
    by 100. */
@@ -2360,8 +2372,7 @@ static const char gs_digit_pairs[201] =
 
 static int gs_fmt_digits(uint64_t v) {
     int n = 1;
-)GSRT"
-R"GSRT(    for (;;) {
+    for (;;) {
         if (v < 10) return n;
         if (v < 100) return n + 1;
         if (v < 1000) return n + 2;
@@ -2566,7 +2577,8 @@ static int64_t gs_fmt_float(uint8_t *dst, int neg, uint64_t frac, int bexp, int 
     } else if (x < 0) {
         *p++ = '0';
         *p++ = '.';
-        for (i = -1; i > x; i--) *p++ = '0';
+)GSRT"
+R"GSRT(        for (i = -1; i > x; i--) *p++ = '0';
         for (i = 0; i < n; i++) *p++ = dig[i];
     } else {
         for (i = 0; i < n || i <= x; i++) {
@@ -2585,8 +2597,7 @@ static int64_t gs_fmt_float(uint8_t *dst, int neg, uint64_t frac, int bexp, int 
 GS_API int64_t gs_fmt_f64(uint8_t *dst, double v) {
     uint64_t b;
     /* C libraries disagree here (msvcrt, which tcc uses on Windows, writes
-)GSRT"
-R"GSRT(       1.#INF and -1.#IND; others give a NaN's sign bit, which depends on
+       1.#INF and -1.#IND; others give a NaN's sign bit, which depends on
        the CPU that made it), so these are spelled by the runtime. */
     if (v != v) { memcpy(dst, "nan", 3); return 3; }
     if (isinf(v)) {

@@ -349,9 +349,20 @@ static struct sigaction gs_prev_segv, gs_prev_bus;
 static void gs_fault_handler(int sig, siginfo_t *info, void *ctx) {
     (void)ctx;
     uint8_t *hit = (uint8_t *)info->si_addr;
+    /* A misaligned access overflows nothing, wherever it points: 32-bit ARM
+       faults on some of them, and those take the default action. Linux
+       alone is believed: macOS reports a guard page's fault as BUS_ADRALN. */
+    #if defined(__linux__) && defined(BUS_ADRALN)
+        if (sig == SIGBUS && info->si_code == BUS_ADRALN) {
+            sigaction(sig, &gs_prev_bus, NULL);
+            return;
+        }
+    #endif
     for (long i = 0; i < gs_nregions; i++) {
         const gs_region *r = &gs_regions[i];
-        if ((uintptr_t)hit - (uintptr_t)r->base < r->size) {
+        /* The usable part is mapped, so only a fault in the gap is growth. */
+        uint8_t *gap = r->base + r->usable;
+        if ((uintptr_t)hit - (uintptr_t)gap < r->size - r->usable) {
             char msg[GS_OVERFLOW_TEXT];
             ssize_t w = write(2, msg, gs_overflow_text(msg, r));
             (void)w;
