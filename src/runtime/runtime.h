@@ -132,6 +132,10 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #if GS_STACK_RESERVE > (1ull << 48)
 #error "GS_STACK_RESERVE exceeds the 2^48 limit (goose_spec.md 10.4)"
 #endif
+/* A region and its guard gap are one size_t (gs_reserve_region). */
+#if UINTPTR_MAX <= 0xFFFFFFFFu && GS_STACK_RESERVE + GS_STACK_GAP > 0xFFFFFFFFu
+#error "GS_STACK_RESERVE and GS_STACK_GAP exceed a 32-bit program's 4 GB address space"
+#endif
 
 #ifdef _MSC_VER
 #define GS_NORETURN __declspec(noreturn)

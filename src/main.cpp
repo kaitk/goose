@@ -863,6 +863,8 @@ int Main(int argc, char **argv) {
     // The pointer size the C is laid out for: --pointer-size, else a build's
     // C compiler's, else this machine's.
     int64_t ptrsize = 0;
+    // --stack-reserve's size, which a 32-bit size_t must hold, gap and all.
+    uint64_t stackreserve = 0;
     // A build is for a deliverable: the inlining and the C compiler's
     // optimization both at their highest.
     auto optlevel = verb == "build" ? 2 : 1;
@@ -890,6 +892,7 @@ int Main(int argc, char **argv) {
                 return 1;
             }
             cdefines.push_back(cat("GS_STACK_RESERVE=", size, "ull"));
+            stackreserve = size;
         }
         else if (arg == "--check") nocgen = true;
         else if (arg == "--no-bce") nobce = true;
@@ -1278,6 +1281,12 @@ int Main(int argc, char **argv) {
                 } else {
                     ptrsize = (int64_t)sizeof(void *);
                 }
+            }
+            if (ptrsize == 4 && stackreserve > (4ull << 30) - (1ull << 20)) {
+                fprintf(stderr, "--stack-reserve takes at most 4 GB less the 1 MB guard gap "
+                                "for 4-byte pointers: %llu bytes\n",
+                        (unsigned long long)stackreserve);
+                return 1;
             }
             auto code = RunOnCompilerStack(compile);
             if (code) return code;

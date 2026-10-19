@@ -144,6 +144,10 @@ typedef double gs_ua_f64 GS_UNALIGNED;
 #if GS_STACK_RESERVE > (1ull << 48)
 #error "GS_STACK_RESERVE exceeds the 2^48 limit (goose_spec.md 10.4)"
 #endif
+/* A region and its guard gap are one size_t (gs_reserve_region). */
+#if UINTPTR_MAX <= 0xFFFFFFFFu && GS_STACK_RESERVE + GS_STACK_GAP > 0xFFFFFFFFu
+#error "GS_STACK_RESERVE and GS_STACK_GAP exceed a 32-bit program's 4 GB address space"
+#endif
 
 #ifdef _MSC_VER
 #define GS_NORETURN __declspec(noreturn)
@@ -199,12 +203,12 @@ enum {
     GS_E_CAPRANGE,     /* invalid capacity */
     GS_E_RESIZEFILL,   /* resize growth requires a fill value */
     GS_E_RESIZENEG,    /* resize to a negative length */
-    GS_E_POP,          /* pop on empty array */
+)GSRT"
+R"GSRT(    GS_E_POP,          /* pop on empty array */
     GS_E_THREADID,     /* thread_wait on an unknown thread id */
     GS_E_THREADSELF,   /* a worker cannot wait for itself */
     GS_E_TAG,          /* corrupt ADT tag (debug builds only) */
-)GSRT"
-R"GSRT(    GS_E_ENDIAN,       /* serialization on a big-endian host */
+    GS_E_ENDIAN,       /* serialization on a big-endian host */
     GS_E_SLICELEN,     /* slice pool length negative or beyond any data stack */
     GS_E_POOLSLICE,    /* a slice handed to a slice pool is not one of its runs */
     GS_E_RELNULL,      /* a non-null optional self-relative target has offset zero */
@@ -353,11 +357,11 @@ static inline int gs_simd_level(void) {
      : GS_KSZ(n, 4, 4) ? (void)(GS_AT(uint32_t, d, 0) = 0) \
      : GS_KSZ(n, 1, 1) ? (void)(GS_AT(uint8_t, d, 0) = 0) \
      : GS_KSZ(n, 2, 2) ? (void)(GS_AT(uint16_t, d, 0) = 0) \
-     : GS_KSZ(n, 3, 3) ? (void)(GS_AT(uint16_t, d, 0) = 0, GS_AT(uint8_t, d, 2) = 0) \
+)GSRT"
+R"GSRT(     : GS_KSZ(n, 3, 3) ? (void)(GS_AT(uint16_t, d, 0) = 0, GS_AT(uint8_t, d, 2) = 0) \
      : GS_KSZ(n, 5, 7) ? (void)(GS_AT(uint32_t, d, 0) = 0, GS_AT(uint32_t, d, (n) - 4) = 0) \
      : GS_KSZ(n, 9, 16) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
-)GSRT"
-R"GSRT(     : GS_KSZ(n, 17, 32) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, 8) = 0, \
+     : GS_KSZ(n, 17, 32) ? (void)(GS_AT(uint64_t, d, 0) = 0, GS_AT(uint64_t, d, 8) = 0, \
                                   GS_AT(uint64_t, d, (n) - 16) = 0, GS_AT(uint64_t, d, (n) - 8) = 0) \
      : (void)memset((d), 0, (n)))
 #else
@@ -517,15 +521,15 @@ static T gs_div_##SFX(T a, T b, const char *file, int line) { \
     if (r < (MIN) || r > (MAX)) gs_ovf(a, "/", b, #SFX, file, line); \
     return (T)r; }
 GS_DIVOPS_S(i8, int8_t, -128, 127)
-GS_DIVOPS_S(i16, int16_t, -32768, 32767)
+)GSRT"
+R"GSRT(GS_DIVOPS_S(i16, int16_t, -32768, 32767)
 GS_DIVOPS_S(i32, int32_t, INT32_MIN, INT32_MAX)
 #else
 #define gs_div_i8(a, b, f, l)  GS_DIVS(int8_t, a, b, f, l)
 #define gs_div_i16(a, b, f, l) GS_DIVS(int16_t, a, b, f, l)
 #define gs_div_i32(a, b, f, l) GS_DIVS(int32_t, a, b, f, l)
 #endif
-)GSRT"
-R"GSRT(
+
 #if GS_DEBUG
 
 /* Signed narrow types (8/16/32 bits): 64-bit signed math covers every
@@ -692,7 +696,8 @@ static uint64_t gs_div128_u64(uint64_t hi, uint64_t d, uint64_t *rem) {
 #elif defined(_MSC_VER) && _MSC_VER >= 1920 && defined(_M_X64)
 #include <intrin.h>
 #define GS_HAVE_U128 1
-static uint64_t gs_mulhi_u64(uint64_t a, uint64_t b) { return __umulh(a, b); }
+)GSRT"
+R"GSRT(static uint64_t gs_mulhi_u64(uint64_t a, uint64_t b) { return __umulh(a, b); }
 static uint64_t gs_div128_u64(uint64_t hi, uint64_t d, uint64_t *rem) {
     return _udiv128(hi, 0, d, rem);
 }
@@ -704,8 +709,7 @@ static uint64_t gs_divu_gen(uint64_t d, uint8_t *more) {
 #if GS_HAVE_U128
     int k = 63;
     uint64_t rem, m;
-)GSRT"
-R"GSRT(    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
+    if (d == 0) { *more = GS_DIVU_NONE; return 0; }
     while (!(d >> k)) k--;
     if (!(d & (d - 1))) { *more = (uint8_t)k; return 0; }
     /* floor(2^(64+k) / d), which fits since d > 2^k; then the smallest
@@ -885,7 +889,8 @@ GS_API void gs_thread_wait(int64_t id, const char *file, int line);
 /* One queue per flat element type the program uses (the compiler emits a
    gs_queue global per type, which main sets up before anything can use it).
    Values are contiguous byte images: gs_qget and gs_qpoll return a malloc'd
-   node the caller copies from and frees, gs_qpoll NULL when the queue is
+)GSRT"
+R"GSRT(   node the caller copies from and frees, gs_qpoll NULL when the queue is
    empty. */
 typedef struct gs_qnode {
     struct gs_qnode *next;
@@ -897,8 +902,7 @@ typedef struct gs_qstate *gs_queue;
 #define GS_QUEUE_INIT NULL
 
 GS_API void gs_qinit(gs_queue *q);
-)GSRT"
-R"GSRT(GS_API void gs_qput(gs_queue *q, const void *data, int64_t size);
+GS_API void gs_qput(gs_queue *q, const void *data, int64_t size);
 GS_API gs_qnode *gs_qget(gs_queue *q);
 GS_API gs_qnode *gs_qpoll(gs_queue *q);
 
@@ -1098,12 +1102,12 @@ static int64_t gs_zig_check(const uint8_t *p, const uint8_t *end, int64_t *out) 
 }
 
 /* Element starts, one bit per image byte: the framing pass sets them and the
-   link pass asks whether an offset is one. Only images of variable-size
+)GSRT"
+R"GSRT(   link pass asks whether an offset is one. Only images of variable-size
    elements need it -- for fixed ones a start is a multiple of the size. The
    bitmap is one data stack's worth of scratch, so the largest image that can
    be verified is eight times a stack's reservation; from_bytes rejects a
-)GSRT"
-R"GSRT(   larger one rather than growing into the guard region. */
+   larger one rather than growing into the guard region. */
 #define GS_BM_SET(bm, i) ((bm)[(uint64_t)(i) >> 3] |= (uint8_t)(1u << ((i) & 7)))
 #define GS_BM_GET(bm, i) (((bm)[(uint64_t)(i) >> 3] >> ((i) & 7)) & 1)
 #define GS_BM_MAX ((int64_t)(GS_STACK_RESERVE))
