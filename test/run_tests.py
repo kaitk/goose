@@ -1653,10 +1653,10 @@ def main():
         else:
             r.ok(f"stacks {f.name}")
     r.show_task(stacks_report, HERE / "threads" / "thread_cap.goose", [
-        r"^data stacks: 2 GB reserved per stack, 1 MB guard gap, 4 GB budget: 1 regions, GS_MAX_STACKS 1024$",
+        r"^data stacks: 2 GB reserved per stack, 1 MB guard gap, 64 MB budget: 0 regions, GS_MAX_STACKS 1024$",
         r"^main program: \d+ data stacks \+ 0 global stacks = \d+ regions$",
         r"^worker `worker`: [1-9]\d* data stacks \+ 0 argument and global stacks = \d+ regions$",
-        r"^thread cap: 1 workers \(\(1 - \d+\) / \d+\), what hardware_threads\(\) reports at most$",
+        r"^thread cap: 1 workers \(\(0 - \d+\) / \d+\), what hardware_threads\(\) reports at most$",
         r"^fn worker: [1-9]\d* own, \d+ with callees$",
     ])
     r.show_task(stacks_report, HERE / "codegen" / "cycle_scratch_locals.goose", [
