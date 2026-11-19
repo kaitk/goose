@@ -1805,15 +1805,15 @@ fn time() -> f64            fn delta_time() -> f64            fn frame_count() -
 ```
 
 Flags for `open`: `WINDOW_RESIZABLE`, `WINDOW_HIDDEN`, `WINDOW_FULLSCREEN`,
-`NO_VSYNC`, `DEBUG` (validation layers where installed; on in a debug build of
-the layer), `WAIT_WHEN_IDLE` (below). With `GOOSE_GFX_HEADLESS=1` in the environment, `open` opens no
-window; the test runners use this. The screen is an RGBA8 texture the size
-of the window in pixels, with a depth texture. A frame draws into it, and
-`frame()` shows it. A window has the width and height that `open` gives, in
-the display's own coordinates, and it has every pixel the display has in
-that area. On a high-density display, that is more pixels than its width
-and height; `screen_size()` counts these pixels, and the mouse position is
-reported in them.
+`NO_VSYNC`, `DEBUG` (validation layers where installed; on in a debug build
+of the layer), `WAIT_WHEN_IDLE` (below). With `GOOSE_GFX_HEADLESS=1` in the
+environment, `open` opens no window; the test runners use this. The screen
+is an RGBA8 texture the size of the window in pixels, with a depth texture.
+A frame draws into it, and `frame()` shows it. A window has the width and
+height that `open` gives, in the display's own coordinates, and it has every
+pixel the display has in that area. On a high-density display, that is more
+pixels than its width and height; `screen_size()` counts these pixels, and
+the mouse position is reported in them.
 
 `pixel_density()` is the screen's pixels per unit of those coordinates: 2 on
 most high-density displays, 1 elsewhere, including Windows at any scale
@@ -1827,10 +1827,9 @@ size of the system's own, pass `display_scale()` to `ui::set_scale`.
 
 With `WAIT_WHEN_IDLE`, `frame()` shows the screen only when something used
 the GPU since the last call or the window needs it redrawn. After a frame that
-drew nothing, the next `frame()` waits for an event, up to a second, and
-`delta_time()` leaves the wait out. A program that changes only on input then
-uses next to no CPU or GPU while idle; one that animates draws every frame and
-never waits.
+drew nothing, the next `frame()` waits for an event, up to a second, unless
+`quit()` was called; `delta_time()` leaves the wait out. A resize leaves the
+screen black, so the program redraws when `screen_size()` changes.
 
 `set_fullscreen` makes the window borderless fullscreen at the desktop's
 resolution, or a window again. It returns false if the window can't change,
