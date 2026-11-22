@@ -1832,7 +1832,9 @@ the GPU since the last call or the window needs it redrawn. After a frame that
 drew nothing, the next `frame()` waits for an event, up to a second, unless
 `quit()` was called; `delta_time()` leaves the wait out, so a timer that runs
 while idle reads `time()`. A resize leaves the screen black, so the program
-redraws when `screen_size()` changes.
+redraws when `screen_size()` changes. Gamepads are read at each `frame()`,
+and while one is open and the window has focus the wait lasts at most 16 ms,
+so a stick move shows as soon as it would while drawing.
 
 `set_fullscreen` makes the window borderless fullscreen at the desktop's
 resolution, or a window again. It returns false if the window can't change,
